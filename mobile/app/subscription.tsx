@@ -5,6 +5,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { subscribeDemo } from "@/lib/api";
 import { useAuth } from "@/context/auth";
 
+type BillingPeriod = "monthly" | "annual";
+
 const FEATURES = [
   "More precise receipt and junk-waste results",
   "Separate waste share for each receipt",
@@ -18,6 +20,7 @@ const FEATURES = [
 export default function SubscriptionScreen() {
   const { token, setCurrentUser } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [period, setPeriod] = useState<BillingPeriod>("monthly");
 
   const buy = async () => {
     if (!token) return;
@@ -38,6 +41,31 @@ export default function SubscriptionScreen() {
         <Text style={styles.eyebrow}>Early access</Text>
         <Text style={styles.title}>Receipt Lens Pro</Text>
         <Text style={styles.subtitle}>Subscription access is required during the pre-launch testing period.</Text>
+      </View>
+
+      <View style={styles.periodSwitch}>
+        <Pressable
+          onPress={() => setPeriod("monthly")}
+          style={[styles.periodButton, period === "monthly" && styles.periodActive]}
+        >
+          <Text style={[styles.periodText, period === "monthly" && styles.periodTextActive]}>Monthly</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setPeriod("annual")}
+          style={[styles.periodButton, period === "annual" && styles.periodActive]}
+        >
+          <Text style={[styles.periodText, period === "annual" && styles.periodTextActive]}>Annual</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.priceCard}>
+        <Text style={styles.planTitle}>{period === "monthly" ? "Monthly plan" : "Annual plan"}</Text>
+        <Text style={styles.pricePlaceholder}>{period === "monthly" ? "Monthly price placeholder" : "Annual price placeholder"}</Text>
+        <Text style={styles.planNote}>
+          {period === "monthly"
+            ? "Billed every month after full launch."
+            : "Billed once per year after full launch."}
+        </Text>
       </View>
 
       <View style={styles.list}>
@@ -88,6 +116,54 @@ const styles = StyleSheet.create({
     color: "#b8c4c2",
     fontSize: 16,
     lineHeight: 23,
+  },
+  periodSwitch: {
+    flexDirection: "row",
+    minHeight: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.54)",
+    overflow: "hidden",
+  },
+  periodButton: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  periodActive: {
+    backgroundColor: "#ffffff",
+  },
+  periodText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  periodTextActive: {
+    color: "#183f45",
+  },
+  priceCard: {
+    gap: 8,
+    borderRadius: 8,
+    padding: 18,
+    backgroundColor: "#ffffff",
+  },
+  planTitle: {
+    color: "#1b2a2f",
+    fontSize: 18,
+    fontWeight: "900",
+    textAlign: "center",
+    textTransform: "uppercase",
+  },
+  pricePlaceholder: {
+    color: "#55a83a",
+    fontSize: 28,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  planNote: {
+    color: "#657174",
+    lineHeight: 20,
+    textAlign: "center",
   },
   list: {
     gap: 14,

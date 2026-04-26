@@ -1,6 +1,8 @@
 import { useState } from "react";
+import * as Updates from "expo-updates";
 import {
   Alert,
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,6 +19,8 @@ export default function SettingsScreen() {
   const { token, user, setCurrentUser, signOut } = useAuth();
   const [term, setTerm] = useState("");
   const [saving, setSaving] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState("Not checked yet.");
   const exclusions = user?.junk_exclusions ?? [];
   const dark = Boolean(user?.dark_mode);
 
@@ -58,6 +62,32 @@ export default function SettingsScreen() {
     save({ junk_exclusions: exclusions.filter((item) => item !== value) });
   };
 
+  const checkForUpdates = async () => {
+    if (!Updates.isEnabled) {
+      setUpdateStatus("Updates are available only in the installed app.");
+      return;
+    }
+
+    setCheckingUpdate(true);
+    setUpdateStatus("Checking for updates...");
+    try {
+      const update = await Updates.checkForUpdateAsync();
+      if (!update.isAvailable) {
+        setUpdateStatus("Your app is up to date.");
+        return;
+      }
+
+      setUpdateStatus("Update found. Downloading...");
+      await Updates.fetchUpdateAsync();
+      setUpdateStatus("Update ready. Restarting app...");
+      await Updates.reloadAsync();
+    } catch (err) {
+      setUpdateStatus(err instanceof Error ? err.message : "Could not check for updates.");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
   return (
     <ScrollView style={[styles.container, dark && styles.darkScreen]} contentContainerStyle={styles.screen}>
       <Text style={styles.eyebrow}>Preferences</Text>
@@ -71,6 +101,18 @@ export default function SettingsScreen() {
           </View>
           <Switch value={dark} onValueChange={(value) => save({ dark_mode: value })} />
         </View>
+      </View>
+
+      <View style={[styles.panel, dark && styles.darkPanel]}>
+        <Text style={[styles.panelTitle, dark && styles.darkText]}>App updates</Text>
+        <Text style={[styles.muted, dark && styles.darkMuted]}>{updateStatus}</Text>
+        <Pressable disabled={checkingUpdate} onPress={checkForUpdates} style={styles.updateButton}>
+          {checkingUpdate ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.updateButtonText}>Check for updates</Text>
+          )}
+        </Pressable>
       </View>
 
       <View style={[styles.panel, dark && styles.darkPanel]}>
@@ -195,6 +237,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#e45b2c",
   },
   buttonText: {
+    color: "#ffffff",
+    fontWeight: "900",
+  },
+  updateButton: {
+    minHeight: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: "#e45b2c",
+  },
+  updateButtonText: {
     color: "#ffffff",
     fontWeight: "900",
   },
