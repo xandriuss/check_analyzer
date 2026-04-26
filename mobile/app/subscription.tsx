@@ -19,10 +19,6 @@ export default function SubscriptionScreen() {
   const { token, setCurrentUser } = useAuth();
   const [loading, setLoading] = useState(false);
 
-  const continueFree = () => {
-    router.replace("/(tabs)/camera");
-  };
-
   const buy = async () => {
     if (!token) return;
 
@@ -38,14 +34,10 @@ export default function SubscriptionScreen() {
 
   return (
     <View style={styles.screen}>
-      <Pressable onPress={continueFree} style={styles.close}>
-        <Text style={styles.closeText}>X</Text>
-      </Pressable>
-
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>Upgrade</Text>
+        <Text style={styles.eyebrow}>Early access</Text>
         <Text style={styles.title}>Receipt Lens Pro</Text>
-        <Text style={styles.subtitle}>Keep the free plan or unlock better insight and smoother scanning.</Text>
+        <Text style={styles.subtitle}>Subscription access is required during the pre-launch testing period.</Text>
       </View>
 
       <View style={styles.list}>
@@ -58,12 +50,12 @@ export default function SubscriptionScreen() {
       </View>
 
       <View style={styles.freeBox}>
-        <Text style={styles.freeTitle}>Free plan</Text>
-        <Text style={styles.freeText}>Includes ads, slightly slower operations, and limited weekly scans.</Text>
+        <Text style={styles.freeTitle}>Pre-launch mode</Text>
+        <Text style={styles.freeText}>Free access will return later. For now, unlock Pro to test the full app.</Text>
       </View>
 
       <Pressable disabled={loading} onPress={buy} style={styles.buy}>
-        {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buyText}>Start Pro</Text>}
+        {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buyText}>Unlock Pro access</Text>}
       </Pressable>
     </View>
   );
@@ -76,23 +68,6 @@ const styles = StyleSheet.create({
     padding: 22,
     paddingTop: 58,
     backgroundColor: "#101718",
-  },
-  close: {
-    position: "absolute",
-    right: 18,
-    top: 48,
-    zIndex: 2,
-    height: 36,
-    width: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.12)",
-  },
-  closeText: {
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 16,
-    fontWeight: "900",
   },
   header: {
     gap: 10,

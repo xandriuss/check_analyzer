@@ -54,6 +54,10 @@ class BugReportRequest(BaseModel):
     description: str
 
 
+class ResetDataRequest(BaseModel):
+    confirmation: str
+
+
 FREE_WEEKLY_LIMIT = 3
 DAILY_REWARDED_AD_LIMIT = 3
 BCRYPT_MAX_BYTES = 72
@@ -562,7 +566,7 @@ async def upload(
                     receipt_id=receipt.id,
                     name=name,
                     price=float(amount),
-                    is_junk=1 if (name, amount) in junk_discount_items else 0,
+                    is_junk=0,
                 )
             )
 
@@ -580,7 +584,7 @@ async def upload(
                 {
                     "name": name,
                     "amount": float(amount),
-                    "is_junk": (name, amount) in junk_discount_items,
+                    "is_junk": False,
                 }
                 for name, amount in discounts
             ],
@@ -702,3 +706,25 @@ def list_bug_reports(
         }
         for report in db.query(BugReport).order_by(BugReport.created_at.desc()).all()
     ]
+
+
+@app.post("/admin/reset-data")
+def reset_data(
+    payload: ResetDataRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if payload.confirmation != "RESET":
+        raise HTTPException(status_code=400, detail="Type RESET to confirm data deletion.")
+
+    db.query(Item).delete()
+    db.query(Receipt).delete()
+    db.query(BugReport).delete()
+    db.query(User).filter(User.id != admin.id).delete()
+    admin.is_subscriber = 1
+    admin.role = "admin"
+    admin.bonus_scan_credits = 0
+    admin.rewarded_ads_used = 0
+    admin.rewarded_ads_reset_at = None
+    db.commit()
+    return {"status": "reset", "admin_user_id": admin.id}

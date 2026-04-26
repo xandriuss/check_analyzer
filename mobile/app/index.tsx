@@ -48,7 +48,7 @@ export default function LoginScreen() {
 
   useEffect(() => {
     if (ready && user) {
-      router.replace("/(tabs)/camera");
+      router.replace(user.is_subscriber ? "/(tabs)/camera" : "/subscription");
     }
   }, [ready, user]);
 
