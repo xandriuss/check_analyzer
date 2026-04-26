@@ -78,6 +78,9 @@ Base.metadata.create_all(bind=engine)
 
 
 def migrate_sqlite():
+    if not engine.url.drivername.startswith("sqlite"):
+        return
+
     with engine.begin() as connection:
         user_columns = [row[1] for row in connection.exec_driver_sql("PRAGMA table_info(users)")]
         receipt_columns = [row[1] for row in connection.exec_driver_sql("PRAGMA table_info(receipts)")]
