@@ -1,6 +1,7 @@
 import os
 import shutil
 import json
+import unicodedata
 from uuid import uuid4
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -305,8 +306,13 @@ def parse_discounts(discount_items):
     return discounts
 
 
+def normalize_match_text(value):
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+
+
 def is_generic_discount_name(name):
-    low = str(name or "").lower()
+    low = normalize_match_text(name)
     generic_words = [
         "nuolaidos",
         "suteiktos naudos",
@@ -318,9 +324,43 @@ def is_generic_discount_name(name):
     return any(word in low for word in generic_words) and not any(word in low for word in product_hint_words)
 
 
+def remove_duplicate_discounts(discounts):
+    unique = []
+    seen = set()
+
+    for name, amount in discounts:
+        rounded_amount = round(float(amount), 2)
+        key = (normalize_match_text(name), rounded_amount)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((name, f"{rounded_amount:.2f}"))
+
+    specific_amounts = {
+        round(float(amount), 2)
+        for name, amount in unique
+        if not is_generic_discount_name(name)
+    }
+    specific_total = round(
+        sum(float(amount) for name, amount in unique if not is_generic_discount_name(name)),
+        2,
+    )
+
+    cleaned = []
+    for name, amount in unique:
+        rounded_amount = round(float(amount), 2)
+        if is_generic_discount_name(name) and (
+            rounded_amount in specific_amounts or rounded_amount == specific_total
+        ):
+            continue
+        cleaned.append((name, f"{rounded_amount:.2f}"))
+
+    return cleaned
+
+
 def merge_specific_ocr_discounts(discounts, ocr_discounts):
     if not discounts or not ocr_discounts:
-        return discounts
+        return remove_duplicate_discounts(discounts)
 
     merged = []
     used_ocr_indexes = set()
@@ -344,7 +384,7 @@ def merge_specific_ocr_discounts(discounts, ocr_discounts):
 
         merged.append(replacement or (name, amount))
 
-    return merged
+    return remove_duplicate_discounts(merged)
 
 
 def parse_receipt_total(value):
@@ -540,6 +580,8 @@ async def upload(
         elif any(is_generic_discount_name(name) for name, _ in discounts):
             ocr_data = ocr_data or normalize_scan_data(ocr_parse_receipt(str(path)))
             discounts = merge_specific_ocr_discounts(discounts, parse_discounts(ocr_data.get("discounts", [])))
+
+        discounts = remove_duplicate_discounts(discounts)
 
         exclusions = parse_user_exclusions(user)
         filtered_pairs_for_junk = [
