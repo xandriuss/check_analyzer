@@ -88,28 +88,40 @@ export default function LoginScreen() {
         </Pressable>
       </View>
 
-      <TextInput
-        autoCapitalize="none"
-        keyboardType="email-address"
-        onChangeText={setEmail}
-        placeholder="Email"
-        style={styles.input}
-        value={email}
-      />
-      <TextInput
-        onChangeText={setPassword}
-        placeholder="Password"
-        secureTextEntry
-        style={styles.input}
-        value={password}
-      />
-      {isRegistering && (
+      <View style={styles.field}>
+        <Text style={styles.inputLabel}>Email</Text>
         <TextInput
-          onChangeText={setDisplayName}
-          placeholder={mode === "family" ? "Family name" : "Your name"}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          onChangeText={setEmail}
+          placeholder="you@example.com"
+          placeholderTextColor="#7b8684"
           style={styles.input}
-          value={displayName}
+          value={email}
         />
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.inputLabel}>Password</Text>
+        <TextInput
+          onChangeText={setPassword}
+          placeholder="Your password"
+          placeholderTextColor="#7b8684"
+          secureTextEntry
+          style={styles.input}
+          value={password}
+        />
+      </View>
+      {isRegistering && (
+        <View style={styles.field}>
+          <Text style={styles.inputLabel}>{mode === "family" ? "Family name" : "Your name"}</Text>
+          <TextInput
+            onChangeText={setDisplayName}
+            placeholder={mode === "family" ? "Example: Dovydonis family" : "Example: Andrius"}
+            placeholderTextColor="#7b8684"
+            style={styles.input}
+            value={displayName}
+          />
+        </View>
       )}
 
       <Pressable onPress={() => setRememberMe((value) => !value)} style={styles.checkboxRow}>
@@ -200,6 +212,14 @@ const styles = StyleSheet.create({
     color: "#1b2a2f",
     fontSize: 16,
     paddingHorizontal: 14,
+  },
+  field: {
+    gap: 6,
+  },
+  inputLabel: {
+    color: "#183f45",
+    fontSize: 13,
+    fontWeight: "800",
   },
   checkboxRow: {
     flexDirection: "row",

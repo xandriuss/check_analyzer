@@ -1,5 +1,7 @@
 import { Platform } from "react-native";
 
+const PRODUCTION_API_URL = "https://checkanalyzer-production.up.railway.app";
+
 export type AppMode = "person" | "family";
 
 export type User = {
@@ -55,7 +57,7 @@ export type UsageStatus = {
 
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
-  (Platform.OS === "web" ? "http://localhost:8000" : "http://10.0.2.2:8000");
+  (Platform.OS === "web" ? "http://localhost:8000" : PRODUCTION_API_URL);
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
