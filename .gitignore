@@ -1,0 +1,13 @@
+.env
+App/.env
+App/app.db
+App/uploads/
+__pycache__/
+*.pyc
+node_modules/
+.expo/
+.next/
+dist/
+build/
+*.log
+.embedded-git-backups/
