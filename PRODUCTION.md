@@ -18,9 +18,24 @@ ADMIN_EMAIL=your-admin-email
 ADMIN_PASSWORD=your-admin-password
 DATABASE_URL=postgresql+psycopg://user:password@host:5432/database
 ALLOWED_ORIGINS=*
+SUBSCRIPTION_PROVIDER=demo
+SUBSCRIPTION_MONTHLY_PRODUCT_ID=receipt_lens_pro_monthly
+SUBSCRIPTION_ANNUAL_PRODUCT_ID=receipt_lens_pro_annual
+SUBSCRIPTION_MONTHLY_PRICE_LABEL=Monthly price placeholder
+SUBSCRIPTION_ANNUAL_PRICE_LABEL=Annual price placeholder
 ```
 
 Never put `OPENAI_API_KEY` or `SECRET_KEY` inside the mobile app.
+
+Subscription variables:
+
+- `SUBSCRIPTION_PROVIDER`: keep `demo` until real billing is connected. Later use `google_play`, `app_store`, or `revenuecat`.
+- `SUBSCRIPTION_MONTHLY_PRODUCT_ID`: put the Google Play / Apple monthly subscription product ID here.
+- `SUBSCRIPTION_ANNUAL_PRODUCT_ID`: put the Google Play / Apple annual subscription product ID here.
+- `SUBSCRIPTION_MONTHLY_PRICE_LABEL`: temporary label shown in the app until prices come from the store SDK.
+- `SUBSCRIPTION_ANNUAL_PRICE_LABEL`: temporary annual label shown in the app until prices come from the store SDK.
+
+For real payments, do not trust the mobile app alone. The backend must verify the Google Play / Apple purchase token before setting a user as subscribed.
 
 The backend exposes:
 

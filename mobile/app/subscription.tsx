@@ -1,8 +1,8 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { subscribeDemo } from "@/lib/api";
+import { getSubscriptionConfig, SubscriptionConfig, subscribeDemo } from "@/lib/api";
 import { useAuth } from "@/context/auth";
 
 type BillingPeriod = "monthly" | "annual";
@@ -21,6 +21,18 @@ export default function SubscriptionScreen() {
   const { token, setCurrentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const [config, setConfig] = useState<SubscriptionConfig | null>(null);
+
+  useEffect(() => {
+    getSubscriptionConfig()
+      .then(setConfig)
+      .catch(() => setConfig(null));
+  }, []);
+
+  const selectedPlan = useMemo(
+    () => config?.plans.find((plan) => plan.period === period),
+    [config?.plans, period],
+  );
 
   const buy = async () => {
     if (!token) return;
@@ -60,7 +72,10 @@ export default function SubscriptionScreen() {
 
       <View style={styles.priceCard}>
         <Text style={styles.planTitle}>{period === "monthly" ? "Monthly plan" : "Annual plan"}</Text>
-        <Text style={styles.pricePlaceholder}>{period === "monthly" ? "Monthly price placeholder" : "Annual price placeholder"}</Text>
+        <Text style={styles.pricePlaceholder}>
+          {selectedPlan?.price_label ??
+            (period === "monthly" ? "Monthly price placeholder" : "Annual price placeholder")}
+        </Text>
         <Text style={styles.planNote}>
           {period === "monthly"
             ? "Billed every month after full launch."

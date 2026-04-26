@@ -55,6 +55,18 @@ export type UsageStatus = {
   rewarded_ads_reset_at?: string | null;
 };
 
+export type SubscriptionPlan = {
+  period: "monthly" | "annual";
+  product_id: string;
+  price_label: string;
+};
+
+export type SubscriptionConfig = {
+  provider: string;
+  mode: "demo" | "store";
+  plans: SubscriptionPlan[];
+};
+
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
   (Platform.OS === "web" ? "http://localhost:8000" : PRODUCTION_API_URL);
@@ -162,6 +174,10 @@ export async function subscribeDemo(token: string) {
       Authorization: `Bearer ${token}`,
     },
   });
+}
+
+export async function getSubscriptionConfig() {
+  return request<SubscriptionConfig>("/subscription-config");
 }
 
 export function getUsage(token: string) {

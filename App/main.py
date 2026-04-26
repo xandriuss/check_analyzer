@@ -61,6 +61,23 @@ class ResetDataRequest(BaseModel):
 FREE_WEEKLY_LIMIT = 3
 DAILY_REWARDED_AD_LIMIT = 3
 BCRYPT_MAX_BYTES = 72
+SUBSCRIPTION_PROVIDER = os.getenv("SUBSCRIPTION_PROVIDER", "demo")
+SUBSCRIPTION_MONTHLY_PRODUCT_ID = os.getenv(
+    "SUBSCRIPTION_MONTHLY_PRODUCT_ID",
+    "receipt_lens_pro_monthly",
+)
+SUBSCRIPTION_ANNUAL_PRODUCT_ID = os.getenv(
+    "SUBSCRIPTION_ANNUAL_PRODUCT_ID",
+    "receipt_lens_pro_annual",
+)
+SUBSCRIPTION_MONTHLY_PRICE_LABEL = os.getenv(
+    "SUBSCRIPTION_MONTHLY_PRICE_LABEL",
+    "Monthly price placeholder",
+)
+SUBSCRIPTION_ANNUAL_PRICE_LABEL = os.getenv(
+    "SUBSCRIPTION_ANNUAL_PRICE_LABEL",
+    "Annual price placeholder",
+)
 
 
 app = FastAPI(title="Receipt Junk Analyzer")
@@ -163,6 +180,26 @@ seed_admin_user()
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/subscription-config")
+def subscription_config():
+    return {
+        "provider": SUBSCRIPTION_PROVIDER,
+        "mode": "demo" if SUBSCRIPTION_PROVIDER == "demo" else "store",
+        "plans": [
+            {
+                "period": "monthly",
+                "product_id": SUBSCRIPTION_MONTHLY_PRODUCT_ID,
+                "price_label": SUBSCRIPTION_MONTHLY_PRICE_LABEL,
+            },
+            {
+                "period": "annual",
+                "product_id": SUBSCRIPTION_ANNUAL_PRODUCT_ID,
+                "price_label": SUBSCRIPTION_ANNUAL_PRICE_LABEL,
+            },
+        ],
+    }
 
 
 def get_db():
