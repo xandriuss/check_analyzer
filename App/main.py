@@ -426,6 +426,38 @@ def parse_receipt_total(value):
     return total if total > 0 else None
 
 
+def calculated_scan_total(pairs, discounts):
+    return round(
+        sum(float(price) for _, price in pairs) + sum(float(amount) for _, amount in discounts),
+        2,
+    )
+
+
+def has_repeated_price_hallucination(pairs):
+    if len(pairs) < 5:
+        return False
+
+    prices = [round(float(price), 2) for _, price in pairs]
+    most_common_count = max(prices.count(price) for price in set(prices))
+    return most_common_count >= 4 and most_common_count / len(prices) >= 0.6
+
+
+def scan_result_is_plausible(pairs, discounts, receipt_total):
+    if not pairs:
+        return False
+
+    if has_repeated_price_hallucination(pairs):
+        return False
+
+    calculated = calculated_scan_total(pairs, discounts)
+    if receipt_total and receipt_total > 0:
+        tolerance = max(1.0, receipt_total * 0.08)
+        if abs(calculated - receipt_total) > tolerance:
+            return False
+
+    return True
+
+
 def waste_percent(total, junk_total):
     if not total:
         return 0
@@ -588,23 +620,29 @@ async def upload(
         ocr_data = None
 
         pairs = parse_pairs(data.get("items", []))
-        if not pairs:
-            ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
-            pairs = parse_pairs(ocr_data.get("items", []))
-
-        if not pairs:
-            raise HTTPException(
-                status_code=422,
-                detail="Could not read receipt items. Try a clearer photo inside the guide.",
-            )
-
-        discounts = parse_discounts(data.get("discounts", []))
+        discounts = remove_duplicate_discounts(parse_discounts(data.get("discounts", [])))
         receipt_total = parse_receipt_total(data.get("receipt_total"))
 
-        if not discounts or receipt_total is None:
+        if not scan_result_is_plausible(pairs, discounts, receipt_total):
+            ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
+            ocr_pairs = parse_pairs(ocr_data.get("items", []))
+            ocr_discounts = remove_duplicate_discounts(parse_discounts(ocr_data.get("discounts", [])))
+            ocr_receipt_total = parse_receipt_total(ocr_data.get("receipt_total"))
+
+            if scan_result_is_plausible(ocr_pairs, ocr_discounts, ocr_receipt_total):
+                data = ocr_data
+                pairs = ocr_pairs
+                discounts = ocr_discounts
+                receipt_total = ocr_receipt_total
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
+                )
+        elif not discounts or receipt_total is None:
             ocr_data = ocr_data or normalize_scan_data(ocr_parse_receipt(str(path)))
             if not discounts:
-                discounts = parse_discounts(ocr_data.get("discounts", []))
+                discounts = remove_duplicate_discounts(parse_discounts(ocr_data.get("discounts", [])))
             if receipt_total is None:
                 receipt_total = parse_receipt_total(ocr_data.get("receipt_total"))
         elif any(is_generic_discount_name(name) for name, _ in discounts):
@@ -633,10 +671,7 @@ async def upload(
             junk_discount_items.append((name, f"{discount_value:.2f}"))
 
         junk_total = round(max(junk_total + junk_discount_total, 0), 2)
-        calculated_total = round(
-            sum(float(price) for _, price in pairs) + sum(float(amount) for _, amount in discounts),
-            2,
-        )
+        calculated_total = calculated_scan_total(pairs, discounts)
         total = receipt_total if receipt_total and receipt_total > 0 else calculated_total
         scan_path = data.get("scan_path")
         if not scan_path and ocr_data:
