@@ -49,10 +49,18 @@ export default function SubscriptionScreen() {
 
   return (
     <View style={styles.screen}>
+      <Pressable
+        accessibilityLabel="Skip subscription"
+        onPress={() => router.replace("/(tabs)/camera")}
+        style={styles.closeButton}
+      >
+        <Text style={styles.closeText}>X</Text>
+      </Pressable>
+
       <View style={styles.header}>
         <Text style={styles.eyebrow}>Early access</Text>
         <Text style={styles.title}>Receipt Lens Pro</Text>
-        <Text style={styles.subtitle}>Subscription access is required during the pre-launch testing period.</Text>
+        <Text style={styles.subtitle}>Unlock more scans, deeper insights, faster operations, and no ads.</Text>
       </View>
 
       <View style={styles.periodSwitch}>
@@ -111,6 +119,23 @@ const styles = StyleSheet.create({
     padding: 22,
     paddingTop: 58,
     backgroundColor: "#101718",
+  },
+  closeButton: {
+    position: "absolute",
+    right: 18,
+    top: 44,
+    zIndex: 2,
+    minHeight: 36,
+    minWidth: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  closeText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "900",
   },
   header: {
     gap: 10,
