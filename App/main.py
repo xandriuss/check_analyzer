@@ -2,6 +2,7 @@ import os
 import shutil
 import json
 import unicodedata
+from difflib import SequenceMatcher
 from uuid import uuid4
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -324,6 +325,27 @@ def is_generic_discount_name(name):
     return any(word in low for word in generic_words) and not any(word in low for word in product_hint_words)
 
 
+def discount_product_text(name):
+    text = normalize_match_text(name)
+    for value in ["aciu", "nuolaida", "nuolaidos", "prekei", "preke"]:
+        text = text.replace(value, " ")
+    return " ".join(part for part in text.split() if not any(char.isdigit() for char in part))
+
+
+def is_same_discount_product(left_name, right_name):
+    left = discount_product_text(left_name)
+    right = discount_product_text(right_name)
+    if not left or not right:
+        return False
+
+    left_tokens = {token for token in left.split() if len(token) >= 4}
+    right_tokens = {token for token in right.split() if len(token) >= 4}
+    shared_tokens = left_tokens & right_tokens
+    brand_overlap = any(token in shared_tokens for token in {"cola", "coca", "alus", "guminukai", "taffel"})
+    similarity = SequenceMatcher(None, left, right).ratio()
+    return brand_overlap or similarity >= 0.58
+
+
 def remove_duplicate_discounts(discounts):
     unique = []
     seen = set()
@@ -332,6 +354,14 @@ def remove_duplicate_discounts(discounts):
         rounded_amount = round(float(amount), 2)
         key = (normalize_match_text(name), rounded_amount)
         if key in seen:
+            continue
+        if any(
+            round(float(existing_amount), 2) == rounded_amount
+            and not is_generic_discount_name(existing_name)
+            and not is_generic_discount_name(name)
+            and is_same_discount_product(existing_name, name)
+            for existing_name, existing_amount in unique
+        ):
             continue
         seen.add(key)
         unique.append((name, f"{rounded_amount:.2f}"))
