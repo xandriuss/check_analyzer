@@ -56,6 +56,7 @@ class BugReportRequest(BaseModel):
 
 FREE_WEEKLY_LIMIT = 3
 DAILY_REWARDED_AD_LIMIT = 3
+BCRYPT_MAX_BYTES = 72
 
 
 app = FastAPI(title="Receipt Junk Analyzer")
@@ -115,11 +116,20 @@ def migrate_sqlite():
 migrate_sqlite()
 
 
+def trim_bcrypt_password(password):
+    encoded = password.encode("utf-8")
+    if len(encoded) <= BCRYPT_MAX_BYTES:
+        return password
+
+    return encoded[:BCRYPT_MAX_BYTES].decode("utf-8", errors="ignore")
+
+
 def seed_admin_user():
     admin_email = os.getenv("ADMIN_EMAIL")
     admin_password = os.getenv("ADMIN_PASSWORD")
     if not admin_email or not admin_password:
         return
+    admin_password = trim_bcrypt_password(admin_password)
 
     db = SessionLocal()
     try:
@@ -142,7 +152,6 @@ def seed_admin_user():
         db.commit()
     finally:
         db.close()
-
 
 seed_admin_user()
 
@@ -353,7 +362,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     mode = payload.mode if payload.mode in {"person", "family"} else "person"
     user = User(
         email=payload.email,
-        password=bcrypt.hash(payload.password),
+        password=bcrypt.hash(trim_bcrypt_password(payload.password)),
         mode=mode,
         display_name=payload.display_name,
     )
@@ -373,7 +382,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
 
-    if not user or not bcrypt.verify(payload.password, user.password):
+    if not user or not bcrypt.verify(trim_bcrypt_password(payload.password), user.password):
         raise HTTPException(status_code=401, detail="Bad login")
 
     return {"token": create_token(user.id), "user": serialize_user(user)}
