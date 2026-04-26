@@ -1,0 +1,13 @@
+.env
+App/.env
+App/app.db
+App/uploads/
+App/__pycache__/
+__pycache__/
+*.pyc
+.git/
+.embedded-git-backups/
+mobile/node_modules/
+mobile/.expo/
+frontend/node_modules/
+frontend/.next/
