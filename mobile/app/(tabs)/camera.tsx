@@ -123,7 +123,7 @@ export default function CameraScreen() {
       const bounds = cropBoundsRef.current;
       if (!dragStart.current || !bounds) return;
       setCropRect(
-        clampRect(
+        clampResizeRect(
           {
             ...dragStart.current,
             width: dragStart.current.width + gesture.dx,
@@ -409,12 +409,12 @@ function containedImageRect(view: Rect, imageWidth = 1, imageHeight = 1) {
 
 function defaultCropRect(view: Rect, imageWidth = 1, imageHeight = 1) {
   const bounds = containedImageRect(view, imageWidth, imageHeight);
-  const width = bounds.width * 0.76;
-  const height = bounds.height * 0.78;
+  const width = bounds.width * 0.84;
+  const height = bounds.height * 0.9;
   return clampRect(
     {
       x: bounds.x + (bounds.width - width) / 2,
-      y: bounds.y + (bounds.height - height) / 2,
+      y: bounds.y + bounds.height * 0.04,
       width,
       height,
     },
@@ -437,7 +437,7 @@ function cropFromManualRect(crop: Rect, view: Rect, imageWidth: number, imageHei
 }
 
 function clampRect(rect: Rect, bounds: Rect) {
-  const minSize = 72;
+  const minSize = 56;
   const width = Math.max(minSize, Math.min(rect.width, bounds.width));
   const height = Math.max(minSize, Math.min(rect.height, bounds.height));
   return {
@@ -445,6 +445,20 @@ function clampRect(rect: Rect, bounds: Rect) {
     y: Math.max(bounds.y, Math.min(rect.y, bounds.y + bounds.height - height)),
     width,
     height,
+  };
+}
+
+function clampResizeRect(rect: Rect, bounds: Rect) {
+  const minSize = 56;
+  const x = Math.max(bounds.x, Math.min(rect.x, bounds.x + bounds.width - minSize));
+  const y = Math.max(bounds.y, Math.min(rect.y, bounds.y + bounds.height - minSize));
+  const maxWidth = bounds.x + bounds.width - x;
+  const maxHeight = bounds.y + bounds.height - y;
+  return {
+    x,
+    y,
+    width: Math.max(minSize, Math.min(rect.width, maxWidth)),
+    height: Math.max(minSize, Math.min(rect.height, maxHeight)),
   };
 }
 
