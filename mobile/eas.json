@@ -8,7 +8,8 @@
       "distribution": "internal",
       "channel": "preview",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://checkanalyzer-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://checkanalyzer-production.up.railway.app",
+        "EXPO_PUBLIC_ENABLE_CLERK": "false"
       },
       "android": {
         "buildType": "apk"
@@ -17,7 +18,8 @@
     "production": {
       "channel": "production",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://checkanalyzer-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://checkanalyzer-production.up.railway.app",
+        "EXPO_PUBLIC_ENABLE_CLERK": "false"
       },
       "android": {
         "buildType": "apk"
