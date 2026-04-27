@@ -450,9 +450,13 @@ def scan_result_is_plausible(pairs, discounts, receipt_total):
         return False
 
     calculated = calculated_scan_total(pairs, discounts)
+    if calculated <= 0:
+        return False
+
     if receipt_total and receipt_total > 0:
-        tolerance = max(1.0, receipt_total * 0.08)
-        if abs(calculated - receipt_total) > tolerance:
+        if calculated > receipt_total * 2.2 and calculated - receipt_total > 12:
+            return False
+        if calculated < receipt_total * 0.25 and receipt_total - calculated > 12:
             return False
 
     return True
@@ -673,6 +677,7 @@ async def upload(
         junk_total = round(max(junk_total + junk_discount_total, 0), 2)
         calculated_total = calculated_scan_total(pairs, discounts)
         total = receipt_total if receipt_total and receipt_total > 0 else calculated_total
+        junk_total = min(junk_total, total)
         scan_path = data.get("scan_path")
         if not scan_path and ocr_data:
             scan_path = ocr_data.get("scan_path")

@@ -236,7 +236,7 @@ export default function CameraScreen() {
               </View>
             )}
             <View pointerEvents="none" style={styles.cropHint}>
-              <Text style={styles.cropHintText}>Move and resize the box around the receipt</Text>
+              <Text style={styles.cropHintText}>Drag the box. Pull the orange corner to resize.</Text>
             </View>
           </View>
           <View style={styles.actions}>
@@ -635,14 +635,15 @@ const styles = StyleSheet.create({
   },
   moveHandle: {
     position: "absolute",
-    top: 34,
-    right: 34,
-    bottom: 34,
-    left: 34,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
-    backgroundColor: "rgba(0,0,0,0.12)",
+    backgroundColor: "rgba(0,0,0,0.08)",
   },
   moveHandleText: {
     color: "#ffffff",
@@ -652,6 +653,7 @@ const styles = StyleSheet.create({
   },
   cropCorner: {
     position: "absolute",
+    zIndex: 2,
     width: 28,
     height: 28,
     borderColor: "#e45b2c",
@@ -682,13 +684,14 @@ const styles = StyleSheet.create({
   },
   resizeHandle: {
     position: "absolute",
-    right: -18,
-    bottom: -18,
-    width: 52,
-    height: 52,
+    right: -22,
+    bottom: -22,
+    zIndex: 3,
+    width: 64,
+    height: 64,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 26,
+    borderRadius: 32,
     borderWidth: 3,
     borderColor: "#ffffff",
     backgroundColor: "#e45b2c",

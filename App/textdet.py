@@ -58,6 +58,14 @@ FORMATAS:
 }
 """
 
+AI_PROMPT += """
+
+EXTRA PRICE RULES:
+- If a line contains "4.99 x 1.084 kg", 4.99 is a unit/kg price, not the final product price. Use the right-side final line price, for example 5.41.
+- Never copy the same price into multiple different products unless the receipt clearly shows that same price on each product line.
+- If a product price is unclear, skip that item instead of guessing a price.
+"""
+
 
 def prepare_receipt_image(image_path):
     if not os.path.exists(image_path):
