@@ -44,6 +44,8 @@ export default function CameraScreen() {
   const [previewLayout, setPreviewLayout] = useState<Rect | null>(null);
   const [cropRect, setCropRect] = useState<Rect | null>(null);
   const dragStart = useRef<Rect | null>(null);
+  const cropRectRef = useRef<Rect | null>(null);
+  const cropBoundsRef = useRef<Rect | null>(null);
 
   const loadUsage = useCallback(async () => {
     if (!token) return;
@@ -84,14 +86,20 @@ export default function CameraScreen() {
 
   const cropBounds = photo && previewLayout ? containedImageRect(previewLayout, photo.width, photo.height) : null;
 
-  const dragResponder = PanResponder.create({
+  useEffect(() => {
+    cropRectRef.current = cropRect;
+    cropBoundsRef.current = cropBounds;
+  }, [cropBounds, cropRect]);
+
+  const dragResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: () => {
-      dragStart.current = cropRect;
+      dragStart.current = cropRectRef.current;
     },
     onPanResponderMove: (_, gesture) => {
-      if (!dragStart.current || !cropBounds) return;
+      const bounds = cropBoundsRef.current;
+      if (!dragStart.current || !bounds) return;
       setCropRect(
         clampRect(
           {
@@ -99,20 +107,21 @@ export default function CameraScreen() {
             x: dragStart.current.x + gesture.dx,
             y: dragStart.current.y + gesture.dy,
           },
-          cropBounds,
+          bounds,
         ),
       );
     },
-  });
+  })).current;
 
-  const resizeResponder = PanResponder.create({
+  const resizeResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: () => {
-      dragStart.current = cropRect;
+      dragStart.current = cropRectRef.current;
     },
     onPanResponderMove: (_, gesture) => {
-      if (!dragStart.current || !cropBounds) return;
+      const bounds = cropBoundsRef.current;
+      if (!dragStart.current || !bounds) return;
       setCropRect(
         clampRect(
           {
@@ -120,11 +129,11 @@ export default function CameraScreen() {
             width: dragStart.current.width + gesture.dx,
             height: dragStart.current.height + gesture.dy,
           },
-          cropBounds,
+          bounds,
         ),
       );
     },
-  });
+  })).current;
 
   const takePhoto = async () => {
     setError("");
@@ -203,7 +212,7 @@ export default function CameraScreen() {
             <Image source={{ uri: photo.uri }} style={styles.preview} />
             {cropRect && (
               <View
-                {...dragResponder.panHandlers}
+                pointerEvents="box-none"
                 style={[
                   styles.cropBox,
                   {
@@ -218,6 +227,9 @@ export default function CameraScreen() {
                 <View style={[styles.cropCorner, styles.cropCornerTopRight]} />
                 <View style={[styles.cropCorner, styles.cropCornerBottomLeft]} />
                 <View style={[styles.cropCorner, styles.cropCornerBottomRight]} />
+                <View {...dragResponder.panHandlers} style={styles.moveHandle}>
+                  <Text style={styles.moveHandleText}>Drag receipt area</Text>
+                </View>
                 <View {...resizeResponder.panHandlers} style={styles.resizeHandle}>
                   <Text style={styles.resizeHandleText}>+</Text>
                 </View>
@@ -621,6 +633,23 @@ const styles = StyleSheet.create({
     borderColor: "#ffffff",
     backgroundColor: "rgba(228,91,44,0.08)",
   },
+  moveHandle: {
+    position: "absolute",
+    top: 34,
+    right: 34,
+    bottom: 34,
+    left: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: "rgba(0,0,0,0.12)",
+  },
+  moveHandleText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "900",
+    textAlign: "center",
+  },
   cropCorner: {
     position: "absolute",
     width: 28,
@@ -653,13 +682,15 @@ const styles = StyleSheet.create({
   },
   resizeHandle: {
     position: "absolute",
-    right: -15,
-    bottom: -15,
-    width: 42,
-    height: 42,
+    right: -18,
+    bottom: -18,
+    width: 52,
+    height: 52,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 21,
+    borderRadius: 26,
+    borderWidth: 3,
+    borderColor: "#ffffff",
     backgroundColor: "#e45b2c",
   },
   resizeHandleText: {
