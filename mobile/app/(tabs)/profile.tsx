@@ -34,7 +34,7 @@ const MENU_ITEMS: MenuItem[] = [
   },
 ];
 
-export default function MoreScreen() {
+export default function ProfileScreen() {
   const { user } = useAuth();
   const dark = Boolean(user?.dark_mode);
   const visibleItems = MENU_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin");
@@ -42,7 +42,7 @@ export default function MoreScreen() {
   return (
     <ScrollView style={[styles.container, dark && styles.darkContainer]} contentContainerStyle={styles.screen}>
       <Text style={styles.eyebrow}>{user?.mode === "family" ? "Family mode" : "Personal mode"}</Text>
-      <Text style={[styles.title, dark && styles.darkText]}>More</Text>
+      <Text style={[styles.title, dark && styles.darkText]}>Profile</Text>
 
       <View style={[styles.profilePanel, dark && styles.darkPanel]}>
         <View style={styles.avatar}>

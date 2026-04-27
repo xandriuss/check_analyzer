@@ -46,10 +46,17 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="more"
+        name="graph"
         options={{
-          title: "More",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="ellipsis.circle.fill" color={color} />,
+          title: "Graph",
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="chart.line.uptrend.xyaxis" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: "Profile",
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.crop.circle.fill" color={color} />,
         }}
       />
       <Tabs.Screen

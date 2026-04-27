@@ -18,10 +18,11 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'camera.fill': 'photo-camera',
   'chart.bar.doc.horizontal.fill': 'bar-chart',
+  'chart.line.uptrend.xyaxis': 'show-chart',
   'wrench.and.screwdriver.fill': 'bug-report',
   'gearshape.fill': 'settings',
   'exclamationmark.bubble.fill': 'feedback',
-  'ellipsis.circle.fill': 'more-horiz',
+  'person.crop.circle.fill': 'person',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
 } as IconMapping;
