@@ -134,6 +134,45 @@ export default function CameraScreen() {
       );
     },
   })).current;
+  const cornerResponders = useRef({
+    topLeft: PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        dragStart.current = cropRectRef.current;
+      },
+      onPanResponderMove: (_, gesture) => {
+        const bounds = cropBoundsRef.current;
+        if (!dragStart.current || !bounds) return;
+        setCropRect(resizeFromCorner(dragStart.current, bounds, "topLeft", gesture.dx, gesture.dy));
+      },
+    }),
+    topRight: PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        dragStart.current = cropRectRef.current;
+      },
+      onPanResponderMove: (_, gesture) => {
+        const bounds = cropBoundsRef.current;
+        if (!dragStart.current || !bounds) return;
+        setCropRect(resizeFromCorner(dragStart.current, bounds, "topRight", gesture.dx, gesture.dy));
+      },
+    }),
+    bottomLeft: PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        dragStart.current = cropRectRef.current;
+      },
+      onPanResponderMove: (_, gesture) => {
+        const bounds = cropBoundsRef.current;
+        if (!dragStart.current || !bounds) return;
+        setCropRect(resizeFromCorner(dragStart.current, bounds, "bottomLeft", gesture.dx, gesture.dy));
+      },
+    }),
+    bottomRight: resizeResponder,
+  }).current;
 
   const takePhoto = async () => {
     setError("");
@@ -223,12 +262,18 @@ export default function CameraScreen() {
                   },
                 ]}
               >
-                <View style={[styles.cropCorner, styles.cropCornerTopLeft]} />
-                <View style={[styles.cropCorner, styles.cropCornerTopRight]} />
-                <View style={[styles.cropCorner, styles.cropCornerBottomLeft]} />
-                <View style={[styles.cropCorner, styles.cropCornerBottomRight]} />
+                <View {...cornerResponders.topLeft.panHandlers} style={[styles.cornerHandle, styles.cornerHandleTopLeft]}>
+                  <View style={[styles.cropCorner, styles.cropCornerTopLeft]} />
+                </View>
+                <View {...cornerResponders.topRight.panHandlers} style={[styles.cornerHandle, styles.cornerHandleTopRight]}>
+                  <View style={[styles.cropCorner, styles.cropCornerTopRight]} />
+                </View>
+                <View {...cornerResponders.bottomLeft.panHandlers} style={[styles.cornerHandle, styles.cornerHandleBottomLeft]}>
+                  <View style={[styles.cropCorner, styles.cropCornerBottomLeft]} />
+                </View>
                 <View {...dragResponder.panHandlers} style={styles.moveHandle} />
-                <View {...resizeResponder.panHandlers} style={styles.resizeHandle}>
+                <View {...cornerResponders.bottomRight.panHandlers} style={styles.resizeHandle}>
+                  <View style={[styles.cropCorner, styles.cropCornerBottomRight]} />
                   <View style={styles.resizeKnob} />
                 </View>
               </View>
@@ -462,6 +507,43 @@ function clampResizeRect(rect: Rect, bounds: Rect) {
   };
 }
 
+function resizeFromCorner(
+  rect: Rect,
+  bounds: Rect,
+  corner: "topLeft" | "topRight" | "bottomLeft" | "bottomRight",
+  dx: number,
+  dy: number,
+) {
+  const minSize = 56;
+  let left = rect.x;
+  let right = rect.x + rect.width;
+  let top = rect.y;
+  let bottom = rect.y + rect.height;
+
+  if (corner.includes("Left")) {
+    left = clamp(rect.x + dx, bounds.x, right - minSize);
+  } else {
+    right = clamp(rect.x + rect.width + dx, left + minSize, bounds.x + bounds.width);
+  }
+
+  if (corner.includes("top")) {
+    top = clamp(rect.y + dy, bounds.y, bottom - minSize);
+  } else {
+    bottom = clamp(rect.y + rect.height + dy, top + minSize, bounds.y + bounds.height);
+  }
+
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(value, max));
+}
+
 function centeredReceiptCrop(imageWidth: number, imageHeight: number) {
   const isLandscape = imageWidth > imageHeight;
   const cropWidth = isLandscape ? imageWidth * 0.5 : imageWidth * 0.72;
@@ -661,6 +743,26 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderColor: "#e45b2c",
+  },
+  cornerHandle: {
+    position: "absolute",
+    zIndex: 4,
+    width: 48,
+    height: 48,
+  },
+  cornerHandleTopLeft: {
+    top: -18,
+    left: -18,
+  },
+  cornerHandleTopRight: {
+    top: -18,
+    right: -18,
+    alignItems: "flex-end",
+  },
+  cornerHandleBottomLeft: {
+    left: -18,
+    bottom: -18,
+    justifyContent: "flex-end",
   },
   cropCornerTopLeft: {
     top: -2,
