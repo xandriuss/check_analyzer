@@ -6,7 +6,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/context/auth";
 
 export default function TabLayout() {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
 
   useEffect(() => {
     if (!token) {
@@ -46,29 +46,28 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="more"
+        options={{
+          title: "More",
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="ellipsis.circle.fill" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="debug"
         options={{
-          title: "Debug",
-          href: user?.role === "admin" ? undefined : null,
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={26} name="wrench.and.screwdriver.fill" color={color} />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen
         name="bugs"
         options={{
-          title: "Bugs",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={26} name="exclamationmark.bubble.fill" color={color} />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: "Settings",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="gearshape.fill" color={color} />,
+          href: null,
         }}
       />
     </Tabs>

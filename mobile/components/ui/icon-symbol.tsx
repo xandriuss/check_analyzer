@@ -21,6 +21,7 @@ const MAPPING = {
   'wrench.and.screwdriver.fill': 'bug-report',
   'gearshape.fill': 'settings',
   'exclamationmark.bubble.fill': 'feedback',
+  'ellipsis.circle.fill': 'more-horiz',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
 } as IconMapping;
