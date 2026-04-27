@@ -16,7 +16,10 @@ Create a Clerk app, then copy:
 
 ```env
 EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_or_pk_live_from_clerk
+EXPO_PUBLIC_ENABLE_CLERK=false
 ```
+
+Keep `EXPO_PUBLIC_ENABLE_CLERK=false` while running in Expo Go. Enable Clerk only in a development build or production build after native dependencies are included.
 
 Create a Convex project, then copy:
 
