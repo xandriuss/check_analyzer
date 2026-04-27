@@ -227,16 +227,14 @@ export default function CameraScreen() {
                 <View style={[styles.cropCorner, styles.cropCornerTopRight]} />
                 <View style={[styles.cropCorner, styles.cropCornerBottomLeft]} />
                 <View style={[styles.cropCorner, styles.cropCornerBottomRight]} />
-                <View {...dragResponder.panHandlers} style={styles.moveHandle}>
-                  <Text style={styles.moveHandleText}>Drag receipt area</Text>
-                </View>
+                <View {...dragResponder.panHandlers} style={styles.moveHandle} />
                 <View {...resizeResponder.panHandlers} style={styles.resizeHandle}>
-                  <Text style={styles.resizeHandleText}>+</Text>
+                  <View style={styles.resizeKnob} />
                 </View>
               </View>
             )}
             <View pointerEvents="none" style={styles.cropHint}>
-              <Text style={styles.cropHintText}>Drag the box. Pull the orange corner to resize.</Text>
+              <Text style={styles.cropHintText}>Move the frame, pull the orange corner</Text>
             </View>
           </View>
           <View style={styles.actions}>
@@ -629,9 +627,9 @@ const styles = StyleSheet.create({
   },
   cropBox: {
     position: "absolute",
-    borderWidth: 2,
-    borderColor: "#ffffff",
-    backgroundColor: "rgba(228,91,44,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.88)",
+    backgroundColor: "rgba(228,91,44,0.04)",
   },
   moveHandle: {
     position: "absolute",
@@ -640,22 +638,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     zIndex: 1,
-    alignItems: "center",
-    justifyContent: "center",
     borderRadius: 8,
-    backgroundColor: "rgba(0,0,0,0.08)",
-  },
-  moveHandleText: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "900",
-    textAlign: "center",
+    backgroundColor: "transparent",
   },
   cropCorner: {
     position: "absolute",
     zIndex: 2,
-    width: 28,
-    height: 28,
+    width: 24,
+    height: 24,
     borderColor: "#e45b2c",
   },
   cropCornerTopLeft: {
@@ -684,28 +674,28 @@ const styles = StyleSheet.create({
   },
   resizeHandle: {
     position: "absolute",
-    right: -22,
-    bottom: -22,
+    right: -20,
+    bottom: -20,
     zIndex: 3,
-    width: 64,
-    height: 64,
+    width: 48,
+    height: 48,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 32,
-    borderWidth: 3,
+    backgroundColor: "transparent",
+  },
+  resizeKnob: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
     borderColor: "#ffffff",
     backgroundColor: "#e45b2c",
-  },
-  resizeHandleText: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "900",
   },
   cropHint: {
     position: "absolute",
     left: 16,
     right: 16,
-    bottom: 18,
+    bottom: 14,
     alignItems: "center",
   },
   cropHintText: {

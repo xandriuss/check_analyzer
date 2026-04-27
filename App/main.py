@@ -346,6 +346,12 @@ def is_same_discount_product(left_name, right_name):
     return brand_overlap or similarity >= 0.58
 
 
+def discount_targets_junk_item(discount_name, junk_items):
+    if is_junk(discount_name):
+        return True
+    return any(is_same_discount_product(discount_name, item_name) for item_name, _ in junk_items)
+
+
 def remove_duplicate_discounts(discounts):
     unique = []
     seen = set()
@@ -665,14 +671,30 @@ async def upload(
         junk_lookup = set(junk_items)
         junk_discount_items = []
         junk_discount_total = 0.0
+        positive_item_total = round(sum(float(price) for _, price in pairs if float(price) > 0), 2)
+        junk_positive_total = round(sum(float(price) for _, price in junk_items if float(price) > 0), 2)
+        generic_discount_total = 0.0
 
         for name, amount in discounts:
-            if is_excluded_junk(name, exclusions) or not is_junk(name):
+            if is_excluded_junk(name, exclusions):
                 continue
 
             discount_value = float(amount)
-            junk_discount_total += discount_value
-            junk_discount_items.append((name, f"{discount_value:.2f}"))
+            if discount_value >= 0:
+                continue
+
+            if discount_targets_junk_item(name, junk_items):
+                junk_discount_total += discount_value
+                junk_discount_items.append((name, f"{discount_value:.2f}"))
+            elif is_generic_discount_name(name):
+                generic_discount_total += discount_value
+
+        if positive_item_total > 0 and junk_positive_total > 0 and generic_discount_total:
+            junk_share = min(max(junk_positive_total / positive_item_total, 0), 1)
+            prorated_discount = round(generic_discount_total * junk_share, 2)
+            junk_discount_total += prorated_discount
+            if prorated_discount:
+                junk_discount_items.append(("Prorated receipt discounts for junk items", f"{prorated_discount:.2f}"))
 
         junk_total = round(max(junk_total + junk_discount_total, 0), 2)
         calculated_total = calculated_scan_total(pairs, discounts)
@@ -710,12 +732,13 @@ async def upload(
             )
 
         for name, amount in discounts:
+            discount_is_junk = discount_targets_junk_item(name, junk_items)
             db.add(
                 Item(
                     receipt_id=receipt.id,
                     name=name,
                     price=float(amount),
-                    is_junk=0,
+                    is_junk=1 if discount_is_junk else 0,
                 )
             )
 
@@ -733,7 +756,7 @@ async def upload(
                 {
                     "name": name,
                     "amount": float(amount),
-                    "is_junk": False,
+                    "is_junk": discount_targets_junk_item(name, junk_items),
                 }
                 for name, amount in discounts
             ],
