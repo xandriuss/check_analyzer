@@ -35,6 +35,7 @@
     },
     "plugins": [
       "expo-router",
+      "@clerk/clerk-expo",
       [
         "expo-splash-screen",
         {
