@@ -7,6 +7,7 @@ import {
   Image,
   LayoutChangeEvent,
   Modal,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -23,19 +24,26 @@ type Rect = {
   height: number;
 };
 
+type CapturedPhoto = {
+  uri: string;
+  width?: number;
+  height?: number;
+};
+
 export default function CameraScreen() {
   const { token, user } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
-  const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<CapturedPhoto | null>(null);
   const [result, setResult] = useState<Receipt | null>(null);
   const [usage, setUsage] = useState<UsageStatus | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [adPlaying, setAdPlaying] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(8);
-  const [cameraLayout, setCameraLayout] = useState<Rect | null>(null);
-  const [frameLayout, setFrameLayout] = useState<Rect | null>(null);
+  const [previewLayout, setPreviewLayout] = useState<Rect | null>(null);
+  const [cropRect, setCropRect] = useState<Rect | null>(null);
+  const dragStart = useRef<Rect | null>(null);
 
   const loadUsage = useCallback(async () => {
     if (!token) return;
@@ -69,6 +77,55 @@ export default function CameraScreen() {
     return () => clearTimeout(timer);
   }, [adPlaying, adSecondsLeft, token]);
 
+  useEffect(() => {
+    if (!photo || !previewLayout || cropRect) return;
+    setCropRect(defaultCropRect(previewLayout, photo.width, photo.height));
+  }, [cropRect, photo, previewLayout]);
+
+  const cropBounds = photo && previewLayout ? containedImageRect(previewLayout, photo.width, photo.height) : null;
+
+  const dragResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      dragStart.current = cropRect;
+    },
+    onPanResponderMove: (_, gesture) => {
+      if (!dragStart.current || !cropBounds) return;
+      setCropRect(
+        clampRect(
+          {
+            ...dragStart.current,
+            x: dragStart.current.x + gesture.dx,
+            y: dragStart.current.y + gesture.dy,
+          },
+          cropBounds,
+        ),
+      );
+    },
+  });
+
+  const resizeResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      dragStart.current = cropRect;
+    },
+    onPanResponderMove: (_, gesture) => {
+      if (!dragStart.current || !cropBounds) return;
+      setCropRect(
+        clampRect(
+          {
+            ...dragStart.current,
+            width: dragStart.current.width + gesture.dx,
+            height: dragStart.current.height + gesture.dy,
+          },
+          cropBounds,
+        ),
+      );
+    },
+  });
+
   const takePhoto = async () => {
     setError("");
     const picture = await cameraRef.current?.takePictureAsync({
@@ -77,32 +134,24 @@ export default function CameraScreen() {
       skipProcessing: false,
     });
     if (picture?.uri) {
-      try {
-        const cropped = await cropReceiptPhoto(
-          picture.uri,
-          picture.width,
-          picture.height,
-          frameLayout,
-          cameraLayout,
-        );
-        setPhotoUri(cropped);
-      } catch {
-        setPhotoUri(picture.uri);
-      }
+      setPhoto({ uri: picture.uri, width: picture.width, height: picture.height });
+      setCropRect(null);
       setResult(null);
     }
   };
 
   const upload = async () => {
-    if (!photoUri || !token) return;
+    if (!photo || !token) return;
 
     setLoading(true);
     setError("");
 
     try {
-      const scan = await uploadReceipt(photoUri, token);
+      const croppedUri = await cropReceiptPhoto(photo, cropRect, previewLayout);
+      const scan = await uploadReceipt(croppedUri, token);
       setResult(scan);
-      setPhotoUri(null);
+      setPhoto(null);
+      setCropRect(null);
       await loadUsage();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not scan receipt");
@@ -125,18 +174,9 @@ export default function CameraScreen() {
 
   return (
     <View style={styles.screen}>
-      {!photoUri ? (
+      {!photo ? (
         <CameraView ref={cameraRef} style={styles.camera}>
-          <View onLayout={(event) => setCameraLayout(layoutToRect(event))} style={styles.cameraShade}>
-            <View onLayout={(event) => setFrameLayout(layoutToRect(event))} style={styles.receiptFrame}>
-              <View style={styles.centerLine} />
-              <View style={[styles.corner, styles.cornerTopLeft]} />
-              <View style={[styles.corner, styles.cornerTopRight]} />
-              <View style={[styles.corner, styles.cornerBottomLeft]} />
-              <View style={[styles.corner, styles.cornerBottomRight]} />
-            </View>
-            <Text style={styles.frameText}>Fill the tall guide with the receipt</Text>
-
+          <View style={styles.cameraShade}>
             {result && (
               <View style={styles.totalPanel}>
                 <View>
@@ -159,11 +199,39 @@ export default function CameraScreen() {
         </CameraView>
       ) : (
         <View style={styles.previewScreen}>
-          <Image source={{ uri: photoUri }} style={styles.preview} />
+          <View onLayout={(event) => setPreviewLayout(layoutToRect(event))} style={styles.previewWrap}>
+            <Image source={{ uri: photo.uri }} style={styles.preview} />
+            {cropRect && (
+              <View
+                {...dragResponder.panHandlers}
+                style={[
+                  styles.cropBox,
+                  {
+                    left: cropRect.x,
+                    top: cropRect.y,
+                    width: cropRect.width,
+                    height: cropRect.height,
+                  },
+                ]}
+              >
+                <View style={[styles.cropCorner, styles.cropCornerTopLeft]} />
+                <View style={[styles.cropCorner, styles.cropCornerTopRight]} />
+                <View style={[styles.cropCorner, styles.cropCornerBottomLeft]} />
+                <View style={[styles.cropCorner, styles.cropCornerBottomRight]} />
+                <View {...resizeResponder.panHandlers} style={styles.resizeHandle}>
+                  <Text style={styles.resizeHandleText}>+</Text>
+                </View>
+              </View>
+            )}
+            <View pointerEvents="none" style={styles.cropHint}>
+              <Text style={styles.cropHintText}>Move and resize the box around the receipt</Text>
+            </View>
+          </View>
           <View style={styles.actions}>
             <Pressable
               onPress={() => {
-                setPhotoUri(null);
+                setPhoto(null);
+                setCropRect(null);
                 setResult(null);
                 setError("");
               }}
@@ -280,25 +348,23 @@ function formatResetTime(value: string) {
 }
 
 async function cropReceiptPhoto(
-  uri: string,
-  width?: number,
-  height?: number,
-  frame?: Rect | null,
-  view?: Rect | null,
+  photo: CapturedPhoto,
+  cropRect?: Rect | null,
+  previewLayout?: Rect | null,
 ) {
-  const normalized = await manipulateAsync(uri, [], {
+  const normalized = await manipulateAsync(photo.uri, [], {
     compress: 0.94,
     format: SaveFormat.JPEG,
   });
-  const imageWidth = normalized.width || width;
-  const imageHeight = normalized.height || height;
+  const imageWidth = normalized.width || photo.width;
+  const imageHeight = normalized.height || photo.height;
 
   if (!imageWidth || !imageHeight) {
-    return uri;
+    return photo.uri;
   }
 
-  const crop = frame && view
-    ? cropFromVisibleFrame(frame, view, imageWidth, imageHeight)
+  const crop = cropRect && previewLayout
+    ? cropFromManualRect(cropRect, previewLayout, imageWidth, imageHeight)
     : centeredReceiptCrop(imageWidth, imageHeight);
 
   const result = await manipulateAsync(
@@ -319,20 +385,57 @@ function layoutToRect(event: LayoutChangeEvent) {
   return { x, y, width, height };
 }
 
-function cropFromVisibleFrame(frame: Rect, view: Rect, imageWidth: number, imageHeight: number) {
-  const scale = Math.max(view.width / imageWidth, view.height / imageHeight);
-  const displayedWidth = imageWidth * scale;
-  const displayedHeight = imageHeight * scale;
-  const hiddenX = Math.max((displayedWidth - view.width) / 2, 0);
-  const hiddenY = Math.max((displayedHeight - view.height) / 2, 0);
-  const padding = Math.min(frame.width, frame.height) * 0.035;
+function containedImageRect(view: Rect, imageWidth = 1, imageHeight = 1) {
+  const scale = Math.min(view.width / imageWidth, view.height / imageHeight);
+  const width = imageWidth * scale;
+  const height = imageHeight * scale;
+  return {
+    x: (view.width - width) / 2,
+    y: (view.height - height) / 2,
+    width,
+    height,
+  };
+}
 
-  const imageX = (frame.x - padding + hiddenX) / scale;
-  const imageY = (frame.y - padding + hiddenY) / scale;
-  const cropWidth = (frame.width + padding * 2) / scale;
-  const cropHeight = (frame.height + padding * 2) / scale;
+function defaultCropRect(view: Rect, imageWidth = 1, imageHeight = 1) {
+  const bounds = containedImageRect(view, imageWidth, imageHeight);
+  const width = bounds.width * 0.76;
+  const height = bounds.height * 0.78;
+  return clampRect(
+    {
+      x: bounds.x + (bounds.width - width) / 2,
+      y: bounds.y + (bounds.height - height) / 2,
+      width,
+      height,
+    },
+    bounds,
+  );
+}
 
-  return clampCrop(imageX, imageY, cropWidth, cropHeight, imageWidth, imageHeight);
+function cropFromManualRect(crop: Rect, view: Rect, imageWidth: number, imageHeight: number) {
+  const displayed = containedImageRect(view, imageWidth, imageHeight);
+  const scale = displayed.width / imageWidth;
+  const padding = Math.min(crop.width, crop.height) * 0.02;
+  return clampCrop(
+    (crop.x - displayed.x - padding) / scale,
+    (crop.y - displayed.y - padding) / scale,
+    (crop.width + padding * 2) / scale,
+    (crop.height + padding * 2) / scale,
+    imageWidth,
+    imageHeight,
+  );
+}
+
+function clampRect(rect: Rect, bounds: Rect) {
+  const minSize = 72;
+  const width = Math.max(minSize, Math.min(rect.width, bounds.width));
+  const height = Math.max(minSize, Math.min(rect.height, bounds.height));
+  return {
+    x: Math.max(bounds.x, Math.min(rect.x, bounds.x + bounds.width - width)),
+    y: Math.max(bounds.y, Math.min(rect.y, bounds.y + bounds.height - height)),
+    width,
+    height,
+  };
 }
 
 function centeredReceiptCrop(imageWidth: number, imageHeight: number) {
@@ -373,7 +476,7 @@ const styles = StyleSheet.create({
   },
   cameraShade: {
     flex: 1,
-    justifyContent: "space-evenly",
+    justifyContent: "flex-end",
     alignItems: "center",
     paddingHorizontal: 20,
     paddingBottom: 42,
@@ -503,10 +606,84 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#f6f4ef",
   },
+  previewWrap: {
+    flex: 1,
+    backgroundColor: "#111111",
+  },
   preview: {
     flex: 1,
     resizeMode: "contain",
     backgroundColor: "#111111",
+  },
+  cropBox: {
+    position: "absolute",
+    borderWidth: 2,
+    borderColor: "#ffffff",
+    backgroundColor: "rgba(228,91,44,0.08)",
+  },
+  cropCorner: {
+    position: "absolute",
+    width: 28,
+    height: 28,
+    borderColor: "#e45b2c",
+  },
+  cropCornerTopLeft: {
+    top: -2,
+    left: -2,
+    borderLeftWidth: 5,
+    borderTopWidth: 5,
+  },
+  cropCornerTopRight: {
+    top: -2,
+    right: -2,
+    borderRightWidth: 5,
+    borderTopWidth: 5,
+  },
+  cropCornerBottomLeft: {
+    left: -2,
+    bottom: -2,
+    borderLeftWidth: 5,
+    borderBottomWidth: 5,
+  },
+  cropCornerBottomRight: {
+    right: -2,
+    bottom: -2,
+    borderRightWidth: 5,
+    borderBottomWidth: 5,
+  },
+  resizeHandle: {
+    position: "absolute",
+    right: -15,
+    bottom: -15,
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 21,
+    backgroundColor: "#e45b2c",
+  },
+  resizeHandleText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  cropHint: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 18,
+    alignItems: "center",
+  },
+  cropHintText: {
+    overflow: "hidden",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+    textAlign: "center",
   },
   actions: {
     flexDirection: "row",

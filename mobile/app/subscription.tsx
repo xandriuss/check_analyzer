@@ -41,7 +41,7 @@ export default function SubscriptionScreen() {
     try {
       const user = await subscribeDemo(token);
       setCurrentUser(user);
-      router.replace("/(tabs)/camera");
+      router.replace("/(tabs)/history");
     } finally {
       setLoading(false);
     }
@@ -51,7 +51,7 @@ export default function SubscriptionScreen() {
     <View style={styles.screen}>
       <Pressable
         accessibilityLabel="Skip subscription"
-        onPress={() => router.replace("/(tabs)/camera")}
+        onPress={() => router.replace("/(tabs)/history")}
         style={styles.closeButton}
       >
         <Text style={styles.closeText}>X</Text>

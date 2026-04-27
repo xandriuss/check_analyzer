@@ -30,19 +30,19 @@ export default function TabLayout() {
       }}
     >
       <Tabs.Screen
-        name="camera"
-        options={{
-          title: "Camera",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="camera.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="history"
         options={{
           title: "Data",
           tabBarIcon: ({ color }) => (
             <IconSymbol size={26} name="chart.bar.doc.horizontal.fill" color={color} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="camera"
+        options={{
+          title: "Camera",
+          tabBarIcon: ({ color }) => <IconSymbol size={26} name="camera.fill" color={color} />,
         }}
       />
       <Tabs.Screen
