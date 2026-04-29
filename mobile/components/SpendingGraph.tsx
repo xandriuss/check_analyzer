@@ -1,9 +1,9 @@
-import { useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getReceipts, Receipt } from "@/lib/api";
 import { useAuth } from "@/context/auth";
+import { useI18n } from "@/lib/i18n";
 
 type ChartPeriod = "week" | "month" | "year";
 type ChartPoint = {
@@ -12,8 +12,9 @@ type ChartPoint = {
   useful: number;
 };
 
-export default function GraphScreen() {
+export function SpendingGraph() {
   const { token, user } = useAuth();
+  const { t } = useI18n();
   const dark = Boolean(user?.dark_mode);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [period, setPeriod] = useState<ChartPeriod>("week");
@@ -47,17 +48,12 @@ export default function GraphScreen() {
     }
   }, [token]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadReceipts();
-    }, [loadReceipts]),
-  );
+  useEffect(() => {
+    loadReceipts();
+  }, [loadReceipts]);
 
   return (
-    <ScrollView style={[styles.container, dark && styles.darkContainer]} contentContainerStyle={styles.screen}>
-      <Text style={styles.eyebrow}>{user?.mode === "family" ? "Family mode" : "Personal mode"}</Text>
-      <Text style={[styles.title, dark && styles.darkText]}>Graph</Text>
-
+    <View style={styles.screen}>
       <View style={styles.periodTabs}>
         {(["week", "month", "year"] as ChartPeriod[]).map((value) => (
           <Pressable
@@ -66,7 +62,7 @@ export default function GraphScreen() {
             style={[styles.periodTab, period === value && styles.periodTabActive]}
           >
             <Text style={[styles.periodText, period === value && styles.periodTextActive]}>
-              {value === "week" ? "Week" : value === "month" ? "Month" : "Year"}
+              {value === "week" ? t("week") : value === "month" ? t("month") : t("year")}
             </Text>
           </Pressable>
         ))}
@@ -74,11 +70,11 @@ export default function GraphScreen() {
 
       <View style={[styles.summaryGrid, dark && styles.darkPanel]}>
         <View>
-          <Text style={[styles.label, dark && styles.darkMuted]}>Junk food</Text>
+          <Text style={[styles.label, dark && styles.darkMuted]}>{t("junkFood")}</Text>
           <Text style={styles.junk}>{totals.junk.toFixed(2)} EUR</Text>
         </View>
         <View>
-          <Text style={[styles.label, dark && styles.darkMuted]}>Useful food spending</Text>
+          <Text style={[styles.label, dark && styles.darkMuted]}>{t("usefulFood")}</Text>
           <Text style={styles.useful}>{totals.useful.toFixed(2)} EUR</Text>
         </View>
       </View>
@@ -88,20 +84,24 @@ export default function GraphScreen() {
         style={[styles.chartPanel, dark && styles.darkPanel]}
       >
         <View>
-          <Text style={[styles.chartTitle, dark && styles.darkText]}>Spending trend</Text>
-          <Text style={[styles.chartSubtitle, dark && styles.darkMuted]}>
-            The timeline starts from your first receipt in this range.
-          </Text>
+          <Text style={[styles.chartTitle, dark && styles.darkText]}>{t("spendingTrend")}</Text>
+          <Text style={[styles.chartSubtitle, dark && styles.darkMuted]}>{t("graphHelp")}</Text>
         </View>
-        <LineChart points={chartPoints} width={chartWidth - 28} dark={dark} />
+        <LineChart
+          dark={dark}
+          junkLabel={t("junkFood")}
+          points={chartPoints}
+          usefulLabel={t("usefulFood")}
+          width={chartWidth - 28}
+        />
       </View>
 
       {loading && <ActivityIndicator color="#e45b2c" />}
       {!!error && <Text style={styles.error}>{error}</Text>}
       {!loading && receipts.length === 0 && (
-        <Text style={[styles.empty, dark && styles.darkMuted]}>Scan a receipt to start building your graph.</Text>
+        <Text style={[styles.empty, dark && styles.darkMuted]}>{t("scanToGraph")}</Text>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -213,7 +213,19 @@ function differenceInMonths(start: Date, end: Date) {
   return (end.getFullYear() - start.getFullYear()) * 12 + end.getMonth() - start.getMonth();
 }
 
-function LineChart({ points, width, dark }: { points: ChartPoint[]; width: number; dark: boolean }) {
+function LineChart({
+  points,
+  width,
+  dark,
+  junkLabel,
+  usefulLabel,
+}: {
+  points: ChartPoint[];
+  width: number;
+  dark: boolean;
+  junkLabel: string;
+  usefulLabel: string;
+}) {
   const chartHeight = 230;
   const chartWidth = Math.max(width, 1);
   const leftAxis = 42;
@@ -258,8 +270,8 @@ function LineChart({ points, width, dark }: { points: ChartPoint[]; width: numbe
         </Text>
       ))}
       <View style={styles.legend}>
-        <LegendItem color="#b3261e" label="Junk food" dark={dark} />
-        <LegendItem color="#1e6d66" label="Useful food spending" dark={dark} />
+        <LegendItem color="#b3261e" label={junkLabel} dark={dark} />
+        <LegendItem color="#1e6d66" label={usefulLabel} dark={dark} />
       </View>
     </View>
   );
@@ -327,30 +339,8 @@ function shouldShowXLabel(length: number, index: number) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f6f4ef",
-  },
-  darkContainer: {
-    backgroundColor: "#101718",
-  },
   screen: {
-    flexGrow: 1,
     gap: 16,
-    padding: 20,
-    paddingTop: 56,
-    paddingBottom: 96,
-  },
-  eyebrow: {
-    color: "#e45b2c",
-    fontSize: 13,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  title: {
-    color: "#1b2a2f",
-    fontSize: 34,
-    fontWeight: "900",
   },
   periodTabs: {
     flexDirection: "row",

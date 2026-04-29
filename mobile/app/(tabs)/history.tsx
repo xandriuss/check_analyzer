@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -11,13 +12,19 @@ import {
 
 import { getReceipts, getSubscriptionSummary, Receipt, SubscriptionSummary } from "@/lib/api";
 import { useAuth } from "@/context/auth";
+import { SpendingGraph } from "@/components/SpendingGraph";
+import { useI18n } from "@/lib/i18n";
+
+type DataView = "receipts" | "graphs";
 
 export default function HistoryScreen() {
   const { token, user } = useAuth();
+  const { t } = useI18n();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [summary, setSummary] = useState<SubscriptionSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [view, setView] = useState<DataView>("receipts");
 
   const totals = useMemo(
     () =>
@@ -62,16 +69,30 @@ export default function HistoryScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.eyebrow}>{user?.mode === "family" ? "Family mode" : "Personal mode"}</Text>
-          <Text style={[styles.title, user?.dark_mode && styles.darkText]}>Data</Text>
+          <Text style={[styles.title, user?.dark_mode && styles.darkText]}>{t("data")}</Text>
         </View>
       </View>
 
-      {summary && (
+      <View style={styles.viewTabs}>
+        {(["receipts", "graphs"] as DataView[]).map((value) => (
+          <Pressable
+            key={value}
+            onPress={() => setView(value)}
+            style={[styles.viewTab, view === value && styles.viewTabActive]}
+          >
+            <Text style={[styles.viewTabText, view === value && styles.viewTabTextActive]}>
+              {value === "receipts" ? t("receiptInfo") : t("graphs")}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      {view === "receipts" && summary && (
         <View style={[styles.proPanel, user?.dark_mode && styles.darkPanel]}>
           {summary.locked ? (
             <>
               <Pressable onPress={() => router.push("/subscription")} style={styles.subscribeButton}>
-                <Text style={styles.subscribeText}>Subscribe</Text>
+                <Text style={styles.subscribeText}>{t("subscribe")}</Text>
               </Pressable>
               <Text style={[styles.locked, user?.dark_mode && styles.darkMuted]}>
                 Unlock waste share, per-receipt junk percent, monthly totals, faster scans, and no ads.
@@ -79,70 +100,76 @@ export default function HistoryScreen() {
             </>
           ) : (
             <>
-              <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>Subscription insights</Text>
+              <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("subscriptionInsights")}</Text>
               <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
-                Waste share: {summary.waste_percent.toFixed(1)}%
+                {t("wasteShare")}: {summary.waste_percent.toFixed(1)}%
               </Text>
               <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
-                Monthly total: {(summary.monthly_total ?? 0).toFixed(2)} EUR
+                {t("monthlyTotal")}: {(summary.monthly_total ?? 0).toFixed(2)} EUR
               </Text>
               <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
-                Monthly junk: {(summary.monthly_junk_total ?? 0).toFixed(2)} EUR
+                {t("monthlyJunk")}: {(summary.monthly_junk_total ?? 0).toFixed(2)} EUR
               </Text>
               <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
-                Monthly waste share: {(summary.monthly_waste_percent ?? 0).toFixed(1)}%
+                {t("monthlyWasteShare")}: {(summary.monthly_waste_percent ?? 0).toFixed(1)}%
               </Text>
             </>
           )}
         </View>
       )}
 
-      <View style={styles.summary}>
-        <View>
-          <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>Total spent</Text>
-          <Text style={styles.total}>{totals.spent.toFixed(2)} EUR</Text>
-        </View>
-        <View>
-          <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>Junk waste</Text>
-          <Text style={styles.junk}>{totals.junk.toFixed(2)} EUR</Text>
-        </View>
-      </View>
-
-      {loading && <ActivityIndicator color="#e45b2c" style={styles.loader} />}
-      {!!error && <Text style={styles.error}>{error}</Text>}
-
-      <FlatList
-        contentContainerStyle={styles.list}
-        data={receipts}
-        keyExtractor={(item) => String(item.id)}
-        ListEmptyComponent={
-          !loading ? <Text style={styles.empty}>No scanned receipts yet.</Text> : null
-        }
-        renderItem={({ item }) => (
-          <View style={[styles.receipt, user?.dark_mode && styles.darkPanel]}>
-            <View style={styles.receiptTop}>
-              <Text style={[styles.receiptDate, user?.dark_mode && styles.darkText]}>
-                {item.date ? new Date(item.date).toLocaleDateString() : "Receipt"}
-              </Text>
-              <Text style={styles.receiptTotal}>{item.total.toFixed(2)} EUR</Text>
+      {view === "receipts" ? (
+        <>
+          <View style={styles.summary}>
+            <View>
+              <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("totalSpent")}</Text>
+              <Text style={styles.total}>{totals.spent.toFixed(2)} EUR</Text>
             </View>
-            <Text style={styles.receiptJunk}>
-              {item.junk_total.toFixed(2)} EUR junk food
-              {user?.is_subscriber ? ` - ${(item.waste_percent ?? 0).toFixed(1)}%` : ""}
-            </Text>
-            {item.items.map((product) => (
-              <View key={`${item.id}-${product.name}-${product.price}`} style={styles.itemRow}>
-                <Text style={[styles.itemName, user?.dark_mode && styles.darkMuted, product.is_junk && styles.itemJunk]}>
-                  {product.name}
-                </Text>
-                <Text style={[styles.itemPrice, user?.dark_mode && styles.darkMuted, product.is_junk && styles.itemJunk]}>
-                  {product.price.toFixed(2)} EUR
-                </Text>
-              </View>
-            ))}
+            <View>
+              <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("junkWaste")}</Text>
+              <Text style={styles.junk}>{totals.junk.toFixed(2)} EUR</Text>
+            </View>
           </View>
-        )}
-      />
+
+          {loading && <ActivityIndicator color="#e45b2c" style={styles.loader} />}
+          {!!error && <Text style={styles.error}>{error}</Text>}
+
+          <FlatList
+            contentContainerStyle={styles.list}
+            data={receipts}
+            keyExtractor={(item) => String(item.id)}
+            ListEmptyComponent={!loading ? <Text style={styles.empty}>{t("noReceipts")}</Text> : null}
+            renderItem={({ item }) => (
+              <View style={[styles.receipt, user?.dark_mode && styles.darkPanel]}>
+                <View style={styles.receiptTop}>
+                  <Text style={[styles.receiptDate, user?.dark_mode && styles.darkText]}>
+                    {item.date ? new Date(item.date).toLocaleDateString() : "Receipt"}
+                  </Text>
+                  <Text style={styles.receiptTotal}>{item.total.toFixed(2)} EUR</Text>
+                </View>
+                <Text style={styles.receiptJunk}>
+                  {item.junk_total.toFixed(2)} EUR {t("junkFood").toLowerCase()}
+                  {user?.is_subscriber ? ` - ${(item.waste_percent ?? 0).toFixed(1)}%` : ""}
+                </Text>
+                {item.items.map((product) => (
+                  <View key={`${item.id}-${product.name}-${product.price}`} style={styles.itemRow}>
+                    <Text style={[styles.itemName, user?.dark_mode && styles.darkMuted, product.is_junk && styles.itemJunk]}>
+                      {product.name}
+                    </Text>
+                    <Text style={[styles.itemPrice, user?.dark_mode && styles.darkMuted, product.is_junk && styles.itemJunk]}>
+                      {product.price.toFixed(2)} EUR
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          />
+        </>
+      ) : (
+        <ScrollView contentContainerStyle={styles.graphWrap}>
+          <SpendingGraph />
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -173,6 +200,33 @@ const styles = StyleSheet.create({
     color: "#1b2a2f",
     fontSize: 34,
     fontWeight: "900",
+  },
+  viewTabs: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    marginBottom: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ded8cc",
+    overflow: "hidden",
+    backgroundColor: "#ffffff",
+  },
+  viewTab: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  viewTabActive: {
+    backgroundColor: "#183f45",
+  },
+  viewTabText: {
+    color: "#657174",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  viewTabTextActive: {
+    color: "#ffffff",
   },
   summary: {
     flexDirection: "row",
@@ -300,5 +354,9 @@ const styles = StyleSheet.create({
   },
   darkMuted: {
     color: "#b8c4c2",
+  },
+  graphWrap: {
+    paddingHorizontal: 20,
+    paddingBottom: 96,
   },
 });

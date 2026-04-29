@@ -14,9 +14,17 @@ import {
 
 import { updateSettings } from "@/lib/api";
 import { useAuth } from "@/context/auth";
+import { AppLanguage, useI18n } from "@/lib/i18n";
+
+const LANGUAGES: { label: string; value: AppLanguage }[] = [
+  { label: "English", value: "en" },
+  { label: "Lietuvių", value: "lt" },
+  { label: "Русский", value: "ru" },
+];
 
 export default function SettingsScreen() {
   const { token, user, setCurrentUser, signOut } = useAuth();
+  const { language, setLanguage, t } = useI18n();
   const [term, setTerm] = useState("");
   const [saving, setSaving] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -90,36 +98,52 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={[styles.container, dark && styles.darkScreen]} contentContainerStyle={styles.screen}>
-      <Text style={styles.eyebrow}>Preferences</Text>
-      <Text style={[styles.title, dark && styles.darkText]}>Settings</Text>
+      <Text style={styles.eyebrow}>{t("preferences")}</Text>
+      <Text style={[styles.title, dark && styles.darkText]}>{t("settings")}</Text>
+
+      <View style={[styles.panel, dark && styles.darkPanel]}>
+        <Text style={[styles.panelTitle, dark && styles.darkText]}>{t("language")}</Text>
+        <Text style={[styles.muted, dark && styles.darkMuted]}>{t("languageHelp")}</Text>
+        <View style={styles.languageTabs}>
+          {LANGUAGES.map((item) => (
+            <Pressable
+              key={item.value}
+              onPress={() => setLanguage(item.value)}
+              style={[styles.languageTab, language === item.value && styles.languageTabActive]}
+            >
+              <Text style={[styles.languageText, language === item.value && styles.languageTextActive]}>
+                {item.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
 
       <View style={[styles.panel, dark && styles.darkPanel]}>
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={[styles.panelTitle, dark && styles.darkText]}>Dark mode</Text>
-            <Text style={[styles.muted, dark && styles.darkMuted]}>Use a dark background with light text.</Text>
+            <Text style={[styles.panelTitle, dark && styles.darkText]}>{t("darkMode")}</Text>
+            <Text style={[styles.muted, dark && styles.darkMuted]}>{t("darkModeHelp")}</Text>
           </View>
           <Switch value={dark} onValueChange={(value) => save({ dark_mode: value })} />
         </View>
       </View>
 
       <View style={[styles.panel, dark && styles.darkPanel]}>
-        <Text style={[styles.panelTitle, dark && styles.darkText]}>App updates</Text>
+        <Text style={[styles.panelTitle, dark && styles.darkText]}>{t("appUpdates")}</Text>
         <Text style={[styles.muted, dark && styles.darkMuted]}>{updateStatus}</Text>
         <Pressable disabled={checkingUpdate} onPress={checkForUpdates} style={styles.updateButton}>
           {checkingUpdate ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.updateButtonText}>Check for updates</Text>
+            <Text style={styles.updateButtonText}>{t("checkForUpdates")}</Text>
           )}
         </Pressable>
       </View>
 
       <View style={[styles.panel, dark && styles.darkPanel]}>
-        <Text style={[styles.panelTitle, dark && styles.darkText]}>Junk exclusions</Text>
-        <Text style={[styles.warning, dark && styles.darkMuted]}>
-          Warning: removing words like cola, beer, chips, or gummies can reduce the app ability to help you save money.
-        </Text>
+        <Text style={[styles.panelTitle, dark && styles.darkText]}>{t("junkExclusions")}</Text>
+        <Text style={[styles.warning, dark && styles.darkMuted]}>{t("junkWarning")}</Text>
         <View style={styles.inputRow}>
           <TextInput
             onChangeText={setTerm}
@@ -129,7 +153,7 @@ export default function SettingsScreen() {
             value={term}
           />
           <Pressable disabled={saving} onPress={addExclusion} style={styles.button}>
-            <Text style={styles.buttonText}>Add</Text>
+            <Text style={styles.buttonText}>{t("add")}</Text>
           </Pressable>
         </View>
 
@@ -137,14 +161,14 @@ export default function SettingsScreen() {
           <View key={item} style={styles.chipRow}>
             <Text style={[styles.chipText, dark && styles.darkText]}>{item}</Text>
             <Pressable onPress={() => removeExclusion(item)}>
-              <Text style={styles.remove}>Remove</Text>
+              <Text style={styles.remove}>{t("remove")}</Text>
             </Pressable>
           </View>
         ))}
       </View>
 
       <Pressable onPress={signOut} style={styles.logout}>
-        <Text style={styles.logoutText}>Log out</Text>
+        <Text style={styles.logoutText}>{t("logOut")}</Text>
       </Pressable>
     </ScrollView>
   );
@@ -182,6 +206,33 @@ const styles = StyleSheet.create({
     borderColor: "#e1dbcf",
     padding: 14,
     backgroundColor: "#ffffff",
+  },
+  languageTabs: {
+    flexDirection: "row",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ded8cc",
+    overflow: "hidden",
+    backgroundColor: "#ffffff",
+  },
+  languageTab: {
+    flex: 1,
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  languageTabActive: {
+    backgroundColor: "#183f45",
+  },
+  languageText: {
+    color: "#657174",
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  languageTextActive: {
+    color: "#ffffff",
   },
   darkPanel: {
     backgroundColor: "#182326",

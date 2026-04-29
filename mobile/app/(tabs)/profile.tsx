@@ -3,10 +3,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/context/auth";
+import { TranslationKey, useI18n } from "@/lib/i18n";
 
 type MenuItem = {
-  title: string;
-  description: string;
+  titleKey: TranslationKey;
+  descriptionKey: TranslationKey;
   icon: "exclamationmark.bubble.fill" | "gearshape.fill" | "wrench.and.screwdriver.fill";
   path: "/(tabs)/bugs" | "/(tabs)/settings" | "/(tabs)/debug";
   adminOnly?: boolean;
@@ -14,20 +15,20 @@ type MenuItem = {
 
 const MENU_ITEMS: MenuItem[] = [
   {
-    title: "Bug reports",
-    description: "Send feedback and view admin reports.",
+    titleKey: "bugReports",
+    descriptionKey: "bugReportsHelp",
     icon: "exclamationmark.bubble.fill",
     path: "/(tabs)/bugs",
   },
   {
-    title: "Settings",
-    description: "Dark mode, app updates, and junk exclusions.",
+    titleKey: "settings",
+    descriptionKey: "settingsHelp",
     icon: "gearshape.fill",
     path: "/(tabs)/settings",
   },
   {
-    title: "Debug",
-    description: "Developer scan details and parsed receipt data.",
+    titleKey: "debug",
+    descriptionKey: "debugHelp",
     icon: "wrench.and.screwdriver.fill",
     path: "/(tabs)/debug",
     adminOnly: true,
@@ -36,13 +37,14 @@ const MENU_ITEMS: MenuItem[] = [
 
 export default function ProfileScreen() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const dark = Boolean(user?.dark_mode);
   const visibleItems = MENU_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin");
 
   return (
     <ScrollView style={[styles.container, dark && styles.darkContainer]} contentContainerStyle={styles.screen}>
       <Text style={styles.eyebrow}>{user?.mode === "family" ? "Family mode" : "Personal mode"}</Text>
-      <Text style={[styles.title, dark && styles.darkText]}>Profile</Text>
+      <Text style={[styles.title, dark && styles.darkText]}>{t("profile")}</Text>
 
       <View style={[styles.profilePanel, dark && styles.darkPanel]}>
         <View style={styles.avatar}>
@@ -57,7 +59,7 @@ export default function ProfileScreen() {
       <View style={styles.menuList}>
         {visibleItems.map((item) => (
           <Pressable
-            key={item.title}
+            key={item.titleKey}
             onPress={() => router.push(item.path)}
             style={({ pressed }) => [styles.menuRow, dark && styles.darkPanel, pressed && styles.pressed]}
           >
@@ -65,8 +67,8 @@ export default function ProfileScreen() {
               <IconSymbol color="#e45b2c" name={item.icon} size={24} />
             </View>
             <View style={styles.menuText}>
-              <Text style={[styles.menuTitle, dark && styles.darkText]}>{item.title}</Text>
-              <Text style={[styles.menuDescription, dark && styles.darkMuted]}>{item.description}</Text>
+              <Text style={[styles.menuTitle, dark && styles.darkText]}>{t(item.titleKey)}</Text>
+              <Text style={[styles.menuDescription, dark && styles.darkMuted]}>{t(item.descriptionKey)}</Text>
             </View>
             <IconSymbol color={dark ? "#b8c4c2" : "#6d7475"} name="chevron.right" size={22} />
           </Pressable>
@@ -75,7 +77,7 @@ export default function ProfileScreen() {
 
       {!user?.is_subscriber && (
         <Pressable onPress={() => router.push("/subscription")} style={styles.proButton}>
-          <Text style={styles.proButtonText}>View Pro</Text>
+          <Text style={styles.proButtonText}>{t("viewPro")}</Text>
         </Pressable>
       )}
     </ScrollView>

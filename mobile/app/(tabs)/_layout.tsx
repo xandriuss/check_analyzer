@@ -4,9 +4,11 @@ import React, { useEffect } from "react";
 import { HapticTab } from "@/components/haptic-tab";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useAuth } from "@/context/auth";
+import { useI18n } from "@/lib/i18n";
 
 export default function TabLayout() {
   const { token } = useAuth();
+  const { t } = useI18n();
 
   useEffect(() => {
     if (!token) {
@@ -32,7 +34,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="history"
         options={{
-          title: "Data",
+          title: t("data"),
           tabBarIcon: ({ color }) => (
             <IconSymbol size={26} name="chart.bar.doc.horizontal.fill" color={color} />
           ),
@@ -41,21 +43,14 @@ export default function TabLayout() {
       <Tabs.Screen
         name="camera"
         options={{
-          title: "Camera",
+          title: t("camera"),
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="camera.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="graph"
-        options={{
-          title: "Graph",
-          tabBarIcon: ({ color }) => <IconSymbol size={26} name="chart.line.uptrend.xyaxis" color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Profile",
+          title: t("profile"),
           tabBarIcon: ({ color }) => <IconSymbol size={26} name="person.crop.circle.fill" color={color} />,
         }}
       />
