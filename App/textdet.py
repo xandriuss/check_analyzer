@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 import cv2
@@ -268,6 +269,120 @@ def _read_ocr_text(img):
             best_text = text
 
     return best_text
+
+
+def _normalize_text(value):
+    normalized = unicodedata.normalize("NFKD", value or "")
+    return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+
+
+def _ocr_score(text, confidence=0):
+    normalized = _normalize_text(text)
+    price_count = len(re.findall(r"-?\d+[,.]\d{2}", text or ""))
+    line_count = len([line for line in (text or "").splitlines() if line.strip()])
+    receipt_total_bonus = 20 if re.search(r"kvito\s+suma|moketina\s+suma", normalized) else 0
+    discount_bonus = 8 if re.search(r"nuolaid|suteiktos\s+naudos|aciu", normalized) else 0
+    product_bonus = sum(
+        2
+        for word in ["coca", "alus", "bandel", "trask", "suris", "kump", "sokolad"]
+        if word in normalized
+    )
+    return price_count * 4 + min(line_count, 45) + receipt_total_bonus + discount_bonus + product_bonus + confidence / 4
+
+
+def _resize_for_ocr(gray):
+    _, width = gray.shape[:2]
+    target_width = 1700
+    if width >= target_width:
+        return gray
+    scale = target_width / max(width, 1)
+    return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+
+def _deskew(gray):
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    coords = cv2.findNonZero(255 - binary)
+    if coords is None:
+        return gray
+
+    angle = cv2.minAreaRect(coords)[-1]
+    if angle < -45:
+        angle = 90 + angle
+    if abs(angle) < 0.25 or abs(angle) > 8:
+        return gray
+
+    height, width = gray.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
+    return cv2.warpAffine(gray, matrix, (width, height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+
+def _ocr_variants(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+    gray = _deskew(_resize_for_ocr(gray))
+    denoised = cv2.bilateralFilter(gray, 7, 35, 35)
+    sharpened = cv2.addWeighted(denoised, 1.6, cv2.GaussianBlur(denoised, (0, 0), 1.2), -0.6, 0)
+    _, otsu = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    adaptive = cv2.adaptiveThreshold(
+        denoised,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        9,
+    )
+    return [
+        ("gray", gray),
+        ("sharpened", sharpened),
+        ("otsu", otsu),
+        ("adaptive", adaptive),
+    ]
+
+
+def _ocr_confidence(image, config):
+    data = pytesseract.image_to_data(
+        image,
+        lang="lit+eng",
+        config=config,
+        output_type=pytesseract.Output.DICT,
+    )
+    confidences = []
+    for value in data.get("conf", []):
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            continue
+        if confidence >= 0:
+            confidences.append(confidence)
+    if not confidences:
+        return 0
+    return sum(confidences) / len(confidences)
+
+
+def _read_ocr_text(img):
+    configs = [
+        "--oem 3 --psm 6 -c preserve_interword_spaces=1",
+        "--oem 3 --psm 4 -c preserve_interword_spaces=1",
+        "--oem 3 --psm 11 -c preserve_interword_spaces=1",
+    ]
+    best = {"text": "", "score": -1, "variant": "", "confidence": 0}
+
+    for variant_name, variant in _ocr_variants(img):
+        for config in configs:
+            text = pytesseract.image_to_string(variant, lang="lit+eng", config=config)
+            confidence = _ocr_confidence(variant, config)
+            score = _ocr_score(text, confidence)
+            if score > best["score"]:
+                best = {
+                    "text": text,
+                    "score": score,
+                    "variant": variant_name,
+                    "confidence": confidence,
+                }
+
+    print(
+        f"OCR selected variant={best.get('variant')} confidence={best.get('confidence', 0):.1f} score={best.get('score', 0):.1f}"
+    )
+    return best["text"]
 
 
 def ocr_parse_receipt(image_path):
