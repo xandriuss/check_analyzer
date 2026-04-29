@@ -66,6 +66,18 @@ EXTRA PRICE RULES:
 - If a product price is unclear, skip that item instead of guessing a price.
 """
 
+AI_PROMPT = """Read a Lithuanian grocery receipt image. Return ONLY valid JSON, no markdown.
+Schema: {"items":[{"name":"...","final_price":0.00}],"discounts":[{"name":"...","amount":-0.00}],"receipt_total":0.00}
+Rules:
+- items = bought product lines only, with the final right-side line price.
+- discounts = negative discount lines, including product discounts like "Aciu nuolaida prekei:..." and generic discounts like "ACIU nuolaidos", "Suteiktos naudos", "Pritaikytos nuolaidos".
+- receipt_total = "Kvito suma" or "Moketina suma" final total.
+- Ignore PVM/tax tables, barcodes, cashier/store/card text, deposit/PET/skardine/depozitine tara lines.
+- Do not use unit/kg/quantity prices as final_price. Example: "4.99 x 1.084 kg" is unit price; use the right-side final line price.
+- Never calculate or guess prices. If the final product price is unclear, skip the item.
+- Keep Lithuanian product names as written. Convert comma decimals to dot numbers.
+"""
+
 
 def prepare_receipt_image(image_path):
     if not os.path.exists(image_path):
@@ -236,6 +248,28 @@ def ai_parse_receipt(image_path):
     return _parse_ai_json(result, scan_path)
 
 
+def _ocr_text_score(text):
+    price_count = len(re.findall(r"-?\d+[,.]\d{2}", text or ""))
+    receipt_total_bonus = 8 if re.search(r"kvito\s+suma|mok[eė]tina\s+suma", text or "", re.I) else 0
+    discount_bonus = 3 if re.search(r"nuolaid|suteiktos\s+naudos|a[cč]i[uū]", text or "", re.I) else 0
+    return price_count + receipt_total_bonus + discount_bonus
+
+
+def _read_ocr_text(img):
+    configs = [
+        "--oem 3 --psm 6 -c preserve_interword_spaces=1",
+        "--oem 3 --psm 4 -c preserve_interword_spaces=1",
+    ]
+    best_text = ""
+
+    for config in configs:
+        text = pytesseract.image_to_string(img, lang="lit+eng", config=config)
+        if _ocr_text_score(text) > _ocr_text_score(best_text):
+            best_text = text
+
+    return best_text
+
+
 def ocr_parse_receipt(image_path):
     scan_path = prepare_receipt_image(image_path)
     img = cv2.imread(scan_path)
@@ -244,11 +278,7 @@ def ocr_parse_receipt(image_path):
         return _empty_result(scan_path)
 
     try:
-        text = pytesseract.image_to_string(
-            img,
-            lang="lit",
-            config="--oem 3 --psm 6",
-        )
+        text = _read_ocr_text(img)
     except pytesseract.TesseractNotFoundError:
         message = "OCR skipped: tesseract is not installed or not in PATH."
         print(message)
