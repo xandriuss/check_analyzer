@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from passlib.hash import bcrypt
 from pydantic import BaseModel
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -136,7 +137,18 @@ def migrate_sqlite():
             connection.exec_driver_sql("UPDATE receipts SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
 
 
+def migrate_receipt_debug_columns():
+    columns = [column["name"] for column in inspect(engine).get_columns("receipts")]
+
+    with engine.begin() as connection:
+        if "ai_output" not in columns:
+            connection.exec_driver_sql("ALTER TABLE receipts ADD COLUMN ai_output TEXT")
+        if "ocr_output" not in columns:
+            connection.exec_driver_sql("ALTER TABLE receipts ADD COLUMN ocr_output TEXT")
+
+
 migrate_sqlite()
+migrate_receipt_debug_columns()
 
 
 def trim_bcrypt_password(password):
@@ -261,15 +273,31 @@ def require_admin(user: User = Depends(get_current_user)):
 
 def normalize_scan_data(data):
     if isinstance(data, list):
-        return {"items": data, "discounts": [], "receipt_total": None, "scan_path": None}
+        return {
+            "items": data,
+            "discounts": [],
+            "receipt_total": None,
+            "scan_path": None,
+            "raw_ai_output": None,
+            "raw_ocr_output": None,
+        }
 
     if not isinstance(data, dict):
-        return {"items": [], "discounts": [], "receipt_total": None, "scan_path": None}
+        return {
+            "items": [],
+            "discounts": [],
+            "receipt_total": None,
+            "scan_path": None,
+            "raw_ai_output": None,
+            "raw_ocr_output": None,
+        }
 
     data.setdefault("items", [])
     data.setdefault("discounts", [])
     data.setdefault("receipt_total", None)
     data.setdefault("scan_path", None)
+    data.setdefault("raw_ai_output", None)
+    data.setdefault("raw_ocr_output", None)
     return data
 
 
@@ -627,14 +655,15 @@ async def upload(
             shutil.copyfileobj(file.file, buffer)
 
         data = normalize_scan_data(ai_parse_receipt(str(path)))
-        ocr_data = None
+        ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
+        ai_output = data.get("raw_ai_output")
+        ocr_output = ocr_data.get("raw_ocr_output")
 
         pairs = parse_pairs(data.get("items", []))
         discounts = remove_duplicate_discounts(parse_discounts(data.get("discounts", [])))
         receipt_total = parse_receipt_total(data.get("receipt_total"))
 
         if not scan_result_is_plausible(pairs, discounts, receipt_total):
-            ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
             ocr_pairs = parse_pairs(ocr_data.get("items", []))
             ocr_discounts = remove_duplicate_discounts(parse_discounts(ocr_data.get("discounts", [])))
             ocr_receipt_total = parse_receipt_total(ocr_data.get("receipt_total"))
@@ -650,13 +679,11 @@ async def upload(
                     detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
                 )
         elif not discounts or receipt_total is None:
-            ocr_data = ocr_data or normalize_scan_data(ocr_parse_receipt(str(path)))
             if not discounts:
                 discounts = remove_duplicate_discounts(parse_discounts(ocr_data.get("discounts", [])))
             if receipt_total is None:
                 receipt_total = parse_receipt_total(ocr_data.get("receipt_total"))
         elif any(is_generic_discount_name(name) for name, _ in discounts):
-            ocr_data = ocr_data or normalize_scan_data(ocr_parse_receipt(str(path)))
             discounts = merge_specific_ocr_discounts(discounts, parse_discounts(ocr_data.get("discounts", [])))
 
         discounts = remove_duplicate_discounts(discounts)
@@ -713,6 +740,8 @@ async def upload(
             junk_total=junk_total,
             photo_path=f"uploads/{filename}",
             scan_path=scan_relative_path,
+            ai_output=ai_output,
+            ocr_output=ocr_output,
         )
         db.add(receipt)
         db.flush()
@@ -752,6 +781,8 @@ async def upload(
             "waste_percent": waste_percent(total, junk_total),
             "photo_url": f"/uploads/{filename}",
             "scan_url": f"/{scan_relative_path}" if scan_relative_path else None,
+            "ai_output": ai_output,
+            "ocr_output": ocr_output,
             "discounts": [
                 {
                     "name": name,
@@ -799,6 +830,8 @@ def get_receipts(
             "waste_percent": waste_percent(receipt.total, receipt.junk_total),
             "photo_url": f"/{receipt.photo_path}" if receipt.photo_path else None,
             "scan_url": f"/{receipt.scan_path}" if receipt.scan_path else None,
+            "ai_output": receipt.ai_output,
+            "ocr_output": receipt.ocr_output,
             "items": [
                 {
                     "name": item.name,

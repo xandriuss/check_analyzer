@@ -80,6 +80,24 @@ export default function DebugScreen() {
           ))}
         </View>
       )}
+
+      {latest && (
+        <View style={styles.panel}>
+          <Text style={styles.label}>AI raw output</Text>
+          <Text selectable style={styles.rawOutput}>
+            {latest.ai_output || "No AI output stored for this scan yet."}
+          </Text>
+        </View>
+      )}
+
+      {latest && (
+        <View style={styles.panel}>
+          <Text style={styles.label}>OCR raw output</Text>
+          <Text selectable style={styles.rawOutput}>
+            {latest.ocr_output || "No OCR output stored for this scan yet."}
+          </Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -154,6 +172,12 @@ const styles = StyleSheet.create({
   junk: {
     color: "#b3261e",
     fontWeight: "800",
+  },
+  rawOutput: {
+    color: "#1b2a2f",
+    fontFamily: "monospace",
+    fontSize: 12,
+    lineHeight: 17,
   },
   empty: {
     color: "#657174",

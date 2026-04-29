@@ -30,6 +30,8 @@ export type Receipt = {
   waste_percent?: number;
   photo_url?: string | null;
   scan_url?: string | null;
+  ai_output?: string | null;
+  ocr_output?: string | null;
   discounts?: { name: string; amount: number; is_junk?: boolean }[];
   items: ReceiptItem[];
 };

@@ -34,6 +34,8 @@ class Receipt(Base):
     junk_total = Column(Float)
     photo_path = Column(String, nullable=True)
     scan_path = Column(String, nullable=True)
+    ai_output = Column(Text, nullable=True)
+    ocr_output = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

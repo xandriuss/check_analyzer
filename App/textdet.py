@@ -145,8 +145,15 @@ def prepare_receipt_image(image_path):
     return str(prepared_path)
 
 
-def _empty_result(scan_path=None):
-    return {"items": [], "discounts": [], "receipt_total": None, "scan_path": scan_path}
+def _empty_result(scan_path=None, raw_ai_output=None, raw_ocr_output=None):
+    return {
+        "items": [],
+        "discounts": [],
+        "receipt_total": None,
+        "scan_path": scan_path,
+        "raw_ai_output": raw_ai_output,
+        "raw_ocr_output": raw_ocr_output,
+    }
 
 
 def _to_float(value):
@@ -164,6 +171,7 @@ def _to_float(value):
 
 
 def _parse_ai_json(result, scan_path):
+    raw_result = result
     result = re.sub(r"```json", "", result)
     result = re.sub(r"```", "", result).strip()
 
@@ -174,6 +182,7 @@ def _parse_ai_json(result, scan_path):
         if object_match:
             parsed = json.loads(object_match.group(0))
             parsed["scan_path"] = scan_path
+            parsed["raw_ai_output"] = raw_result
             parsed.setdefault("items", [])
             parsed.setdefault("discounts", [])
             parsed.setdefault("receipt_total", None)
@@ -185,11 +194,12 @@ def _parse_ai_json(result, scan_path):
                 "discounts": [],
                 "receipt_total": None,
                 "scan_path": scan_path,
+                "raw_ai_output": raw_result,
             }
     except json.JSONDecodeError:
         pass
 
-    return _empty_result(scan_path)
+    return _empty_result(scan_path, raw_ai_output=raw_result)
 
 
 def ai_parse_receipt(image_path):
@@ -240,11 +250,12 @@ def ocr_parse_receipt(image_path):
             config="--oem 3 --psm 6",
         )
     except pytesseract.TesseractNotFoundError:
-        print("OCR skipped: tesseract is not installed or not in PATH.")
-        return _empty_result(scan_path)
+        message = "OCR skipped: tesseract is not installed or not in PATH."
+        print(message)
+        return _empty_result(scan_path, raw_ocr_output=message)
     except pytesseract.TesseractError as exc:
         print("OCR skipped:", exc)
-        return _empty_result(scan_path)
+        return _empty_result(scan_path, raw_ocr_output=str(exc))
 
     print("\n=== OCR RAW ===")
     print(text)
@@ -312,6 +323,7 @@ def ocr_parse_receipt(image_path):
         "discounts": discounts,
         "receipt_total": receipt_total,
         "scan_path": scan_path,
+        "raw_ocr_output": text,
     }
 
 
