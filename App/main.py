@@ -5,7 +5,10 @@ import unicodedata
 from difflib import SequenceMatcher
 from uuid import uuid4
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 try:
     from dotenv import load_dotenv
@@ -61,10 +64,17 @@ class ResetDataRequest(BaseModel):
     confirmation: str
 
 
+class RevenueCatRefreshRequest(BaseModel):
+    app_user_id: str
+
+
 FREE_WEEKLY_LIMIT = 3
 DAILY_REWARDED_AD_LIMIT = 3
 BCRYPT_MAX_BYTES = 72
 SUBSCRIPTION_PROVIDER = os.getenv("SUBSCRIPTION_PROVIDER", "demo")
+REVENUECAT_SECRET_KEY = os.getenv("REVENUECAT_SECRET_KEY", "")
+REVENUECAT_ENTITLEMENT_ID = os.getenv("REVENUECAT_ENTITLEMENT_ID", "pro")
+REVENUECAT_APP_USER_ID_PREFIX = os.getenv("REVENUECAT_APP_USER_ID_PREFIX", "receipt_lens_user_")
 SUBSCRIPTION_MONTHLY_PRODUCT_ID = os.getenv(
     "SUBSCRIPTION_MONTHLY_PRODUCT_ID",
     "receipt_lens_pro_monthly",
@@ -201,6 +211,10 @@ def subscription_config():
     return {
         "provider": SUBSCRIPTION_PROVIDER,
         "mode": "demo" if SUBSCRIPTION_PROVIDER == "demo" else "store",
+        "revenuecat": {
+            "entitlement_id": REVENUECAT_ENTITLEMENT_ID,
+            "app_user_id_prefix": REVENUECAT_APP_USER_ID_PREFIX,
+        },
         "plans": [
             {
                 "period": "monthly",
@@ -236,6 +250,61 @@ def serialize_user(user: User):
         "junk_exclusions": parse_user_exclusions(user),
         "bonus_scan_credits": user.bonus_scan_credits or 0,
     }
+
+
+def revenuecat_app_user_id(user: User):
+    return f"{REVENUECAT_APP_USER_ID_PREFIX}{user.id}"
+
+
+def fetch_revenuecat_subscriber(app_user_id: str):
+    if not REVENUECAT_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="RevenueCat server key is not configured.")
+
+    request = Request(
+        f"https://api.revenuecat.com/v1/subscribers/{quote(app_user_id, safe='')}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {REVENUECAT_SECRET_KEY}",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"RevenueCat verification failed with status {exc.code}.",
+        )
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=502, detail=f"RevenueCat verification failed: {exc}")
+
+
+def parse_revenuecat_date(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def revenuecat_entitlement_is_active(subscriber_payload):
+    subscriber = subscriber_payload.get("subscriber", {}) if isinstance(subscriber_payload, dict) else {}
+    entitlements = subscriber.get("entitlements", {}) if isinstance(subscriber, dict) else {}
+    entitlement = entitlements.get(REVENUECAT_ENTITLEMENT_ID) if isinstance(entitlements, dict) else None
+    if not entitlement:
+        return False
+
+    expires_at = parse_revenuecat_date(entitlement.get("expires_date"))
+    if expires_at is None:
+        return True
+
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    return expires_at > now
 
 
 def parse_user_exclusions(user: User):
@@ -601,7 +670,36 @@ def update_settings(payload: SettingsRequest, user: User = Depends(get_current_u
 
 @app.post("/subscribe-demo")
 def subscribe_demo(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if SUBSCRIPTION_PROVIDER != "demo":
+        raise HTTPException(status_code=403, detail="Demo subscription unlock is disabled in store billing mode.")
+
     user.is_subscriber = 1
+    db.commit()
+    db.refresh(user)
+    return serialize_user(user)
+
+
+@app.post("/subscription/revenuecat/refresh")
+def refresh_revenuecat_subscription(
+    payload: RevenueCatRefreshRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if SUBSCRIPTION_PROVIDER != "revenuecat":
+        raise HTTPException(status_code=400, detail="RevenueCat billing is not enabled.")
+
+    expected_app_user_id = revenuecat_app_user_id(user)
+    if payload.app_user_id != expected_app_user_id:
+        raise HTTPException(status_code=403, detail="Subscription user id does not match this account.")
+
+    subscriber_payload = fetch_revenuecat_subscriber(payload.app_user_id)
+    is_active = revenuecat_entitlement_is_active(subscriber_payload)
+
+    if user.role == "admin":
+        user.is_subscriber = 1
+    else:
+        user.is_subscriber = 1 if is_active else 0
+
     db.commit()
     db.refresh(user)
     return serialize_user(user)
@@ -655,21 +753,29 @@ async def upload(
             shutil.copyfileobj(file.file, buffer)
 
         data = normalize_scan_data(ai_parse_receipt(str(path)))
-        ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
+        ocr_data = None
         ai_output = data.get("raw_ai_output")
-        ocr_output = ocr_data.get("raw_ocr_output")
+        ocr_output = "OCR skipped: AI result was reliable enough."
+
+        def get_ocr_data():
+            nonlocal ocr_data, ocr_output
+            if ocr_data is None:
+                ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
+                ocr_output = ocr_data.get("raw_ocr_output")
+            return ocr_data
 
         pairs = parse_pairs(data.get("items", []))
         discounts = remove_duplicate_discounts(parse_discounts(data.get("discounts", [])))
         receipt_total = parse_receipt_total(data.get("receipt_total"))
 
         if not scan_result_is_plausible(pairs, discounts, receipt_total):
-            ocr_pairs = parse_pairs(ocr_data.get("items", []))
-            ocr_discounts = remove_duplicate_discounts(parse_discounts(ocr_data.get("discounts", [])))
-            ocr_receipt_total = parse_receipt_total(ocr_data.get("receipt_total"))
+            fallback_data = get_ocr_data()
+            ocr_pairs = parse_pairs(fallback_data.get("items", []))
+            ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
+            ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
 
             if scan_result_is_plausible(ocr_pairs, ocr_discounts, ocr_receipt_total):
-                data = ocr_data
+                data = fallback_data
                 pairs = ocr_pairs
                 discounts = ocr_discounts
                 receipt_total = ocr_receipt_total
@@ -679,12 +785,14 @@ async def upload(
                     detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
                 )
         elif not discounts or receipt_total is None:
+            fallback_data = get_ocr_data()
             if not discounts:
-                discounts = remove_duplicate_discounts(parse_discounts(ocr_data.get("discounts", [])))
+                discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             if receipt_total is None:
-                receipt_total = parse_receipt_total(ocr_data.get("receipt_total"))
+                receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
         elif any(is_generic_discount_name(name) for name, _ in discounts):
-            discounts = merge_specific_ocr_discounts(discounts, parse_discounts(ocr_data.get("discounts", [])))
+            fallback_data = get_ocr_data()
+            discounts = merge_specific_ocr_discounts(discounts, parse_discounts(fallback_data.get("discounts", [])))
 
         discounts = remove_duplicate_discounts(discounts)
 

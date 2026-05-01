@@ -66,6 +66,10 @@ export type SubscriptionPlan = {
 export type SubscriptionConfig = {
   provider: string;
   mode: "demo" | "store";
+  revenuecat?: {
+    entitlement_id: string;
+    app_user_id_prefix: string;
+  };
   plans: SubscriptionPlan[];
 };
 
@@ -175,6 +179,16 @@ export async function subscribeDemo(token: string) {
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  });
+}
+
+export async function refreshRevenueCatSubscription(token: string, appUserId: string) {
+  return request<User>("/subscription/revenuecat/refresh", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ app_user_id: appUserId }),
   });
 }
 

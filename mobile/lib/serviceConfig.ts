@@ -1,6 +1,10 @@
 export const CLERK_PUBLISHABLE_KEY = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "";
 export const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL ?? "";
 export const ENABLE_CLERK = process.env.EXPO_PUBLIC_ENABLE_CLERK === "true";
+export const REVENUECAT_ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY ?? "";
+export const REVENUECAT_IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY ?? "";
 
 export const CLERK_ENABLED = ENABLE_CLERK && CLERK_PUBLISHABLE_KEY.length > 0;
 export const CONVEX_ENABLED = CLERK_ENABLED && CONVEX_URL.length > 0;
+export const REVENUECAT_ENABLED =
+  REVENUECAT_ANDROID_API_KEY.length > 0 || REVENUECAT_IOS_API_KEY.length > 0;

@@ -19,6 +19,9 @@ ADMIN_PASSWORD=your-admin-password
 DATABASE_URL=postgresql+psycopg://user:password@host:5432/database
 ALLOWED_ORIGINS=*
 SUBSCRIPTION_PROVIDER=demo
+REVENUECAT_SECRET_KEY=sk_replace_me_from_revenuecat
+REVENUECAT_ENTITLEMENT_ID=pro
+REVENUECAT_APP_USER_ID_PREFIX=receipt_lens_user_
 SUBSCRIPTION_MONTHLY_PRODUCT_ID=receipt_lens_pro_monthly
 SUBSCRIPTION_ANNUAL_PRODUCT_ID=receipt_lens_pro_annual
 SUBSCRIPTION_MONTHLY_PRICE_LABEL=Monthly price placeholder
@@ -29,13 +32,31 @@ Never put `OPENAI_API_KEY` or `SECRET_KEY` inside the mobile app.
 
 Subscription variables:
 
-- `SUBSCRIPTION_PROVIDER`: keep `demo` until real billing is connected. Later use `google_play`, `app_store`, or `revenuecat`.
+- `SUBSCRIPTION_PROVIDER`: keep `demo` for local testing. Use `revenuecat` when real store billing is ready.
+- `REVENUECAT_SECRET_KEY`: RevenueCat secret key. Backend only. Never put this in the mobile app.
+- `REVENUECAT_ENTITLEMENT_ID`: RevenueCat entitlement that unlocks Pro, for example `pro`.
+- `REVENUECAT_APP_USER_ID_PREFIX`: must match the mobile app prefix. Default is `receipt_lens_user_`.
 - `SUBSCRIPTION_MONTHLY_PRODUCT_ID`: put the Google Play / Apple monthly subscription product ID here.
 - `SUBSCRIPTION_ANNUAL_PRODUCT_ID`: put the Google Play / Apple annual subscription product ID here.
 - `SUBSCRIPTION_MONTHLY_PRICE_LABEL`: temporary label shown in the app until prices come from the store SDK.
 - `SUBSCRIPTION_ANNUAL_PRICE_LABEL`: temporary annual label shown in the app until prices come from the store SDK.
 
-For real payments, do not trust the mobile app alone. The backend must verify the Google Play / Apple purchase token before setting a user as subscribed.
+For real payments, use RevenueCat:
+
+1. Create Android and iOS apps in RevenueCat.
+2. Create one entitlement named `pro`.
+3. Create monthly and annual products in Google Play / Apple App Store Connect.
+4. Attach those products to a RevenueCat offering.
+5. Set `SUBSCRIPTION_PROVIDER=revenuecat` on Railway.
+6. Set `REVENUECAT_SECRET_KEY` on Railway.
+7. Add these mobile build variables before EAS build:
+
+```env
+EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY=goog_your_public_key
+EXPO_PUBLIC_REVENUECAT_IOS_API_KEY=appl_your_public_key
+```
+
+The mobile app starts the purchase through RevenueCat. The backend verifies the RevenueCat subscriber before it sets `is_subscriber=true`.
 
 The backend exposes:
 

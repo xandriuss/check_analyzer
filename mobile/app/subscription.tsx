@@ -2,10 +2,21 @@ import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { getSubscriptionConfig, SubscriptionConfig, subscribeDemo } from "@/lib/api";
+import {
+  getSubscriptionConfig,
+  refreshRevenueCatSubscription,
+  SubscriptionConfig,
+  subscribeDemo,
+} from "@/lib/api";
 import { useAuth } from "@/context/auth";
-
-type BillingPeriod = "monthly" | "annual";
+import {
+  BillingPeriod,
+  isRevenueCatReady,
+  loadRevenueCatStorePlans,
+  purchaseRevenueCatPlan,
+  restoreRevenueCatSubscription,
+  RevenueCatStorePlan,
+} from "@/lib/revenueCat";
 
 const FEATURES = [
   "More precise receipt and junk-waste results",
@@ -18,10 +29,13 @@ const FEATURES = [
 ];
 
 export default function SubscriptionScreen() {
-  const { token, setCurrentUser } = useAuth();
+  const { token, user, setCurrentUser } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [storeLoading, setStoreLoading] = useState(false);
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
   const [config, setConfig] = useState<SubscriptionConfig | null>(null);
+  const [storePlans, setStorePlans] = useState<Partial<Record<BillingPeriod, RevenueCatStorePlan>>>({});
+  const [error, setError] = useState("");
 
   useEffect(() => {
     getSubscriptionConfig()
@@ -29,19 +43,76 @@ export default function SubscriptionScreen() {
       .catch(() => setConfig(null));
   }, []);
 
+  const storeMode = config?.mode === "store" && config.provider === "revenuecat";
+
+  useEffect(() => {
+    if (storeMode && !isRevenueCatReady()) {
+      setError("Payment keys are not configured for this build yet.");
+      return;
+    }
+
+    if (!storeMode || !user || !config) {
+      return;
+    }
+
+    setStoreLoading(true);
+    setError("");
+    loadRevenueCatStorePlans(user, config)
+      .then(setStorePlans)
+      .catch((exception) => setError(exception.message || "Could not load subscription prices."))
+      .finally(() => setStoreLoading(false));
+  }, [config, storeMode, user]);
+
   const selectedPlan = useMemo(
     () => config?.plans.find((plan) => plan.period === period),
     [config?.plans, period],
   );
+  const selectedStorePlan = storePlans[period];
+  const selectedPrice = selectedStorePlan?.priceLabel ?? selectedPlan?.price_label;
 
   const buy = async () => {
-    if (!token) return;
+    if (!token || !user || !config) return;
 
     setLoading(true);
+    setError("");
     try {
-      const user = await subscribeDemo(token);
-      setCurrentUser(user);
+      let updatedUser;
+
+      if (storeMode) {
+        if (!isRevenueCatReady()) {
+          throw new Error("Payment keys are not configured for this build yet.");
+        }
+
+        const purchase = await purchaseRevenueCatPlan(user, config, period, selectedStorePlan);
+        updatedUser = await refreshRevenueCatSubscription(token, purchase.appUserId);
+      } else {
+        updatedUser = await subscribeDemo(token);
+      }
+
+      setCurrentUser(updatedUser);
       router.replace("/(tabs)/history");
+    } catch (exception: any) {
+      if (exception?.userCancelled) {
+        return;
+      }
+      setError(exception?.message || "Subscription could not be completed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const restore = async () => {
+    if (!token || !user || !config) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const restored = await restoreRevenueCatSubscription(user, config);
+      const updatedUser = await refreshRevenueCatSubscription(token, restored.appUserId);
+      setCurrentUser(updatedUser);
+      router.replace("/(tabs)/history");
+    } catch (exception: any) {
+      setError(exception?.message || "Could not restore purchases.");
     } finally {
       setLoading(false);
     }
@@ -81,13 +152,14 @@ export default function SubscriptionScreen() {
       <View style={styles.priceCard}>
         <Text style={styles.planTitle}>{period === "monthly" ? "Monthly plan" : "Annual plan"}</Text>
         <Text style={styles.pricePlaceholder}>
-          {selectedPlan?.price_label ??
-            (period === "monthly" ? "Monthly price placeholder" : "Annual price placeholder")}
+          {storeLoading ? "Loading price..." : selectedPrice ?? "Price placeholder"}
         </Text>
         <Text style={styles.planNote}>
-          {period === "monthly"
-            ? "Billed every month after full launch."
-            : "Billed once per year after full launch."}
+          {storeMode
+            ? "Payment is handled by Google Play or the App Store."
+            : period === "monthly"
+              ? "Demo unlock for local testing. Real monthly billing can be enabled from the backend."
+              : "Demo unlock for local testing. Real annual billing can be enabled from the backend."}
         </Text>
       </View>
 
@@ -101,13 +173,38 @@ export default function SubscriptionScreen() {
       </View>
 
       <View style={styles.freeBox}>
-        <Text style={styles.freeTitle}>Pre-launch mode</Text>
-        <Text style={styles.freeText}>Free access will return later. For now, unlock Pro to test the full app.</Text>
+        <Text style={styles.freeTitle}>{storeMode ? "Store billing" : "Pre-launch mode"}</Text>
+        <Text style={styles.freeText}>
+          {storeMode
+            ? "Subscribe here when the store products are ready, or close this screen to keep using the free version."
+            : "This build still uses demo unlock. Close this screen to keep using the free version."}
+        </Text>
       </View>
 
-      <Pressable disabled={loading} onPress={buy} style={styles.buy}>
-        {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buyText}>Unlock Pro access</Text>}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+
+      <Pressable
+        disabled={loading || storeLoading || (storeMode && !isRevenueCatReady())}
+        onPress={buy}
+        style={[
+          styles.buy,
+          (loading || storeLoading || (storeMode && !isRevenueCatReady())) && styles.disabledButton,
+        ]}
+      >
+        {loading ? (
+          <ActivityIndicator color="#ffffff" />
+        ) : (
+          <Text style={styles.buyText}>
+            {storeMode ? `Subscribe ${period === "monthly" ? "monthly" : "annually"}` : "Unlock Pro access"}
+          </Text>
+        )}
       </Pressable>
+
+      {storeMode ? (
+        <Pressable disabled={loading} onPress={restore} style={styles.restoreButton}>
+          <Text style={styles.restoreText}>Restore purchases</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -248,9 +345,26 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: "#e45b2c",
   },
+  disabledButton: {
+    opacity: 0.55,
+  },
   buyText: {
     color: "#ffffff",
     fontSize: 18,
     fontWeight: "900",
+  },
+  restoreButton: {
+    minHeight: 42,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  restoreText: {
+    color: "#f3f7f5",
+    fontWeight: "900",
+  },
+  error: {
+    color: "#ffb0a0",
+    fontWeight: "800",
+    lineHeight: 20,
   },
 });

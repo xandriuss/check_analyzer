@@ -28,6 +28,7 @@ type CapturedPhoto = {
   uri: string;
   width?: number;
   height?: number;
+  exif?: Record<string, any>;
 };
 
 export default function CameraScreen() {
@@ -176,15 +177,38 @@ export default function CameraScreen() {
 
   const takePhoto = async () => {
     setError("");
-    const picture = await cameraRef.current?.takePictureAsync({
-      exif: true,
-      quality: 0.85,
-      skipProcessing: false,
-    });
-    if (picture?.uri) {
-      setPhoto({ uri: picture.uri, width: picture.width, height: picture.height });
+    try {
+      const picture = await cameraRef.current?.takePictureAsync({
+        exif: true,
+        quality: 0.9,
+        skipProcessing: false,
+      });
+      if (picture?.uri) {
+        const normalized = await normalizeCapturedPhoto({
+          uri: picture.uri,
+          width: picture.width,
+          height: picture.height,
+          exif: picture.exif,
+        });
+        setPhoto(normalized);
+        setCropRect(null);
+        setResult(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not take photo");
+    }
+  };
+
+  const rotatePhoto = async () => {
+    if (!photo || loading) return;
+
+    setError("");
+    try {
+      const rotated = await rotateCropPreviewPhoto(photo);
+      setPhoto(rotated);
       setCropRect(null);
-      setResult(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not rotate photo");
     }
   };
 
@@ -223,7 +247,11 @@ export default function CameraScreen() {
   return (
     <View style={styles.screen}>
       {!photo ? (
-        <CameraView ref={cameraRef} style={styles.camera}>
+        <CameraView
+          ref={cameraRef}
+          responsiveOrientationWhenOrientationLocked={false}
+          style={styles.camera}
+        >
           <View style={styles.cameraShade}>
             {result && (
               <View style={styles.totalPanel}>
@@ -293,6 +321,9 @@ export default function CameraScreen() {
               style={styles.secondary}
             >
               <Text style={styles.secondaryText}>Retake</Text>
+            </Pressable>
+            <Pressable disabled={loading} onPress={rotatePhoto} style={styles.secondary}>
+              <Text style={styles.secondaryText}>Rotate</Text>
             </Pressable>
             <Pressable disabled={loading} onPress={upload} style={styles.primary}>
               {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.primaryText}>Scan</Text>}
@@ -435,6 +466,56 @@ async function cropReceiptPhoto(
   return result.uri;
 }
 
+async function normalizeCapturedPhoto(photo: CapturedPhoto): Promise<CapturedPhoto> {
+  const rotation = exifRotation(photo.exif);
+  let normalized = await manipulateAsync(photo.uri, rotation ? [{ rotate: rotation }] : [], {
+    compress: 0.94,
+    format: SaveFormat.JPEG,
+  });
+
+  if ((normalized.width ?? photo.width ?? 0) > (normalized.height ?? photo.height ?? 0) * 1.08) {
+    normalized = await manipulateAsync(normalized.uri, [{ rotate: 90 }], {
+      compress: 0.94,
+      format: SaveFormat.JPEG,
+    });
+  }
+
+  return {
+    uri: normalized.uri,
+    width: normalized.width || photo.width,
+    height: normalized.height || photo.height,
+  };
+}
+
+async function rotateCropPreviewPhoto(photo: CapturedPhoto): Promise<CapturedPhoto> {
+  const rotated = await manipulateAsync(photo.uri, [{ rotate: 90 }], {
+    compress: 0.94,
+    format: SaveFormat.JPEG,
+  });
+
+  return {
+    uri: rotated.uri,
+    width: rotated.width || photo.height,
+    height: rotated.height || photo.width,
+  };
+}
+
+function exifRotation(exif?: Record<string, any>) {
+  const orientation = Number(exif?.Orientation ?? exif?.orientation);
+
+  if (orientation === 3) {
+    return 180;
+  }
+  if (orientation === 6) {
+    return 90;
+  }
+  if (orientation === 8) {
+    return -90;
+  }
+
+  return 0;
+}
+
 function layoutToRect(event: LayoutChangeEvent) {
   const { x, y, width, height } = event.nativeEvent.layout;
   return { x, y, width, height };
@@ -454,12 +535,13 @@ function containedImageRect(view: Rect, imageWidth = 1, imageHeight = 1) {
 
 function defaultCropRect(view: Rect, imageWidth = 1, imageHeight = 1) {
   const bounds = containedImageRect(view, imageWidth, imageHeight);
-  const width = bounds.width * 0.84;
-  const height = bounds.height * 0.9;
+  const portraitReceipt = bounds.height >= bounds.width;
+  const width = bounds.width * (portraitReceipt ? 0.74 : 0.46);
+  const height = bounds.height * (portraitReceipt ? 0.68 : 0.74);
   return clampRect(
     {
       x: bounds.x + (bounds.width - width) / 2,
-      y: bounds.y + bounds.height * 0.04,
+      y: bounds.y + (bounds.height - height) / 2,
       width,
       height,
     },
@@ -482,7 +564,7 @@ function cropFromManualRect(crop: Rect, view: Rect, imageWidth: number, imageHei
 }
 
 function clampRect(rect: Rect, bounds: Rect) {
-  const minSize = 56;
+  const minSize = Math.min(48, bounds.width * 0.24, bounds.height * 0.24);
   const width = Math.max(minSize, Math.min(rect.width, bounds.width));
   const height = Math.max(minSize, Math.min(rect.height, bounds.height));
   return {
@@ -494,7 +576,7 @@ function clampRect(rect: Rect, bounds: Rect) {
 }
 
 function clampResizeRect(rect: Rect, bounds: Rect) {
-  const minSize = 56;
+  const minSize = Math.min(48, bounds.width * 0.24, bounds.height * 0.24);
   const x = Math.max(bounds.x, Math.min(rect.x, bounds.x + bounds.width - minSize));
   const y = Math.max(bounds.y, Math.min(rect.y, bounds.y + bounds.height - minSize));
   const maxWidth = bounds.x + bounds.width - x;
@@ -514,7 +596,7 @@ function resizeFromCorner(
   dx: number,
   dy: number,
 ) {
-  const minSize = 56;
+  const minSize = Math.min(48, bounds.width * 0.24, bounds.height * 0.24);
   let left = rect.x;
   let right = rect.x + rect.width;
   let top = rect.y;

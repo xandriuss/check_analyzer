@@ -39,6 +39,15 @@ The app should still be kept iOS-compatible in code, but public iPhone distribut
 This app needs a backend because the OpenAI API key must stay secret.
 Do not put the OpenAI key inside the mobile app.
 
+Real subscription payments also need backend verification. For production billing, set
+`SUBSCRIPTION_PROVIDER=revenuecat` on the backend and keep `REVENUECAT_SECRET_KEY`
+only on Railway. The mobile app should only receive the public RevenueCat keys:
+
+```powershell
+$env:EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY="goog_your_public_key"
+$env:EXPO_PUBLIC_REVENUECAT_IOS_API_KEY="appl_your_public_key"
+```
+
 For real users, host the FastAPI backend on a server and set:
 
 ```powershell
