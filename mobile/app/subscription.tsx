@@ -1,6 +1,15 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   getSubscriptionConfig,
@@ -30,6 +39,7 @@ const FEATURES = [
 
 export default function SubscriptionScreen() {
   const { token, user, setCurrentUser } = useAuth();
+  const { height, width } = useWindowDimensions();
   const [loading, setLoading] = useState(false);
   const [storeLoading, setStoreLoading] = useState(false);
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
@@ -69,6 +79,7 @@ export default function SubscriptionScreen() {
   );
   const selectedStorePlan = storePlans[period];
   const selectedPrice = selectedStorePlan?.priceLabel ?? selectedPlan?.price_label;
+  const compact = height < 760 || width < 360;
 
   const buy = async () => {
     if (!token || !user || !config) return;
@@ -119,7 +130,7 @@ export default function SubscriptionScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView edges={["top", "bottom"]} style={styles.screen}>
       <Pressable
         accessibilityLabel="Skip subscription"
         onPress={() => router.replace("/(tabs)/history")}
@@ -128,100 +139,127 @@ export default function SubscriptionScreen() {
         <Text style={styles.closeText}>X</Text>
       </Pressable>
 
-      <View style={styles.header}>
-        <Text style={styles.eyebrow}>Early access</Text>
-        <Text style={styles.title}>Receipt Lens Pro</Text>
-        <Text style={styles.subtitle}>Unlock more scans, deeper insights, faster operations, and no ads.</Text>
-      </View>
-
-      <View style={styles.periodSwitch}>
-        <Pressable
-          onPress={() => setPeriod("monthly")}
-          style={[styles.periodButton, period === "monthly" && styles.periodActive]}
-        >
-          <Text style={[styles.periodText, period === "monthly" && styles.periodTextActive]}>Monthly</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setPeriod("annual")}
-          style={[styles.periodButton, period === "annual" && styles.periodActive]}
-        >
-          <Text style={[styles.periodText, period === "annual" && styles.periodTextActive]}>Annual</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.priceCard}>
-        <Text style={styles.planTitle}>{period === "monthly" ? "Monthly plan" : "Annual plan"}</Text>
-        <Text style={styles.pricePlaceholder}>
-          {storeLoading ? "Loading price..." : selectedPrice ?? "Price placeholder"}
-        </Text>
-        <Text style={styles.planNote}>
-          {storeMode
-            ? "Payment is handled by Google Play or the App Store."
-            : period === "monthly"
-              ? "Demo unlock for local testing. Real monthly billing can be enabled from the backend."
-              : "Demo unlock for local testing. Real annual billing can be enabled from the backend."}
-        </Text>
-      </View>
-
-      <View style={styles.list}>
-        {FEATURES.map((feature) => (
-          <View key={feature} style={styles.feature}>
-            <Text style={styles.check}>PRO</Text>
-            <Text style={styles.featureText}>{feature}</Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.freeBox}>
-        <Text style={styles.freeTitle}>{storeMode ? "Store billing" : "Pre-launch mode"}</Text>
-        <Text style={styles.freeText}>
-          {storeMode
-            ? "Subscribe here when the store products are ready, or close this screen to keep using the free version."
-            : "This build still uses demo unlock. Close this screen to keep using the free version."}
-        </Text>
-      </View>
-
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-
-      <Pressable
-        disabled={loading || storeLoading || (storeMode && !isRevenueCatReady())}
-        onPress={buy}
-        style={[
-          styles.buy,
-          (loading || storeLoading || (storeMode && !isRevenueCatReady())) && styles.disabledButton,
-        ]}
+      <ScrollView
+        contentContainerStyle={[styles.content, compact && styles.contentCompact]}
+        showsVerticalScrollIndicator={false}
+        style={styles.scroll}
       >
-        {loading ? (
-          <ActivityIndicator color="#ffffff" />
-        ) : (
-          <Text style={styles.buyText}>
-            {storeMode ? `Subscribe ${period === "monthly" ? "monthly" : "annually"}` : "Unlock Pro access"}
+        <View style={[styles.header, compact && styles.headerCompact]}>
+          <Text style={styles.eyebrow}>Early access</Text>
+          <Text style={[styles.title, compact && styles.titleCompact]}>Receipt Lens Pro</Text>
+          <Text style={[styles.subtitle, compact && styles.subtitleCompact]}>
+            Unlock more scans, deeper insights, faster operations, and no ads.
           </Text>
-        )}
-      </Pressable>
+        </View>
 
-      {storeMode ? (
-        <Pressable disabled={loading} onPress={restore} style={styles.restoreButton}>
-          <Text style={styles.restoreText}>Restore purchases</Text>
+        <View style={[styles.periodSwitch, compact && styles.periodSwitchCompact]}>
+          <Pressable
+            onPress={() => setPeriod("monthly")}
+            style={[styles.periodButton, period === "monthly" && styles.periodActive]}
+          >
+            <Text style={[styles.periodText, period === "monthly" && styles.periodTextActive]}>Monthly</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setPeriod("annual")}
+            style={[styles.periodButton, period === "annual" && styles.periodActive]}
+          >
+            <Text style={[styles.periodText, period === "annual" && styles.periodTextActive]}>Annual</Text>
+          </Pressable>
+        </View>
+
+        <View style={[styles.priceCard, compact && styles.priceCardCompact]}>
+          <Text style={[styles.planTitle, compact && styles.planTitleCompact]}>
+            {period === "monthly" ? "Monthly plan" : "Annual plan"}
+          </Text>
+          <Text style={[styles.pricePlaceholder, compact && styles.pricePlaceholderCompact]}>
+            {storeLoading ? "Loading price..." : selectedPrice ?? "Price placeholder"}
+          </Text>
+          <Text style={[styles.planNote, compact && styles.planNoteCompact]}>
+            {storeMode
+              ? "Payment is handled by Google Play or the App Store."
+              : period === "monthly"
+                ? "Demo unlock for local testing. Real monthly billing can be enabled from the backend."
+                : "Demo unlock for local testing. Real annual billing can be enabled from the backend."}
+          </Text>
+        </View>
+
+        <View style={[styles.list, compact && styles.listCompact]}>
+          {FEATURES.map((feature) => (
+            <View key={feature} style={[styles.feature, compact && styles.featureCompact]}>
+              <Text style={styles.check}>PRO</Text>
+              <Text style={[styles.featureText, compact && styles.featureTextCompact]}>{feature}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={[styles.freeBox, compact && styles.freeBoxCompact]}>
+          <Text style={[styles.freeTitle, compact && styles.freeTitleCompact]}>
+            {storeMode ? "Store billing" : "Pre-launch mode"}
+          </Text>
+          <Text style={[styles.freeText, compact && styles.freeTextCompact]}>
+            {storeMode
+              ? "Subscribe here when the store products are ready, or close this screen to keep using the free version."
+              : "This build still uses demo unlock. Close this screen to keep using the free version."}
+          </Text>
+        </View>
+      </ScrollView>
+
+      <View style={[styles.footer, compact && styles.footerCompact]}>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <Pressable
+          disabled={loading || storeLoading || (storeMode && !isRevenueCatReady())}
+          onPress={buy}
+          style={[
+            styles.buy,
+            compact && styles.buyCompact,
+            (loading || storeLoading || (storeMode && !isRevenueCatReady())) && styles.disabledButton,
+          ]}
+        >
+          {loading ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={[styles.buyText, compact && styles.buyTextCompact]}>
+              {storeMode ? `Subscribe ${period === "monthly" ? "monthly" : "annually"}` : "Unlock Pro access"}
+            </Text>
+          )}
         </Pressable>
-      ) : null}
-    </View>
+
+        {storeMode ? (
+          <Pressable disabled={loading} onPress={restore} style={[styles.restoreButton, compact && styles.restoreButtonCompact]}>
+            <Text style={styles.restoreText}>Restore purchases</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    justifyContent: "space-between",
-    padding: 22,
-    paddingTop: 58,
     backgroundColor: "#101718",
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingTop: 58,
+    paddingBottom: 16,
+  },
+  contentCompact: {
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 46,
+    paddingBottom: 12,
   },
   closeButton: {
     position: "absolute",
-    right: 18,
-    top: 44,
-    zIndex: 2,
+    right: 16,
+    top: 12,
+    zIndex: 5,
     minHeight: 36,
     minWidth: 36,
     alignItems: "center",
@@ -235,8 +273,10 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   header: {
-    gap: 10,
-    paddingTop: 34,
+    gap: 9,
+  },
+  headerCompact: {
+    gap: 7,
   },
   eyebrow: {
     color: "#e45b2c",
@@ -246,21 +286,33 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#ffffff",
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: "900",
+    lineHeight: 39,
+  },
+  titleCompact: {
+    fontSize: 29,
+    lineHeight: 34,
   },
   subtitle: {
     color: "#b8c4c2",
     fontSize: 16,
     lineHeight: 23,
   },
+  subtitleCompact: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
   periodSwitch: {
     flexDirection: "row",
-    minHeight: 48,
+    minHeight: 46,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.54)",
     overflow: "hidden",
+  },
+  periodSwitchCompact: {
+    minHeight: 42,
   },
   periodButton: {
     flex: 1,
@@ -279,84 +331,147 @@ const styles = StyleSheet.create({
     color: "#183f45",
   },
   priceCard: {
-    gap: 8,
+    gap: 7,
     borderRadius: 8,
-    padding: 18,
+    padding: 16,
     backgroundColor: "#ffffff",
+  },
+  priceCardCompact: {
+    gap: 5,
+    padding: 12,
   },
   planTitle: {
     color: "#1b2a2f",
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "900",
     textAlign: "center",
     textTransform: "uppercase",
   },
+  planTitleCompact: {
+    fontSize: 15,
+  },
   pricePlaceholder: {
     color: "#55a83a",
-    fontSize: 28,
+    fontSize: 27,
     fontWeight: "900",
+    lineHeight: 34,
     textAlign: "center",
+  },
+  pricePlaceholderCompact: {
+    fontSize: 22,
+    lineHeight: 28,
   },
   planNote: {
     color: "#657174",
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 19,
     textAlign: "center",
   },
+  planNoteCompact: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
   list: {
-    gap: 14,
+    gap: 11,
+  },
+  listCompact: {
+    gap: 7,
   },
   feature: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  featureCompact: {
+    gap: 8,
   },
   check: {
     color: "#e45b2c",
     fontSize: 12,
     fontWeight: "900",
+    lineHeight: 20,
   },
   featureText: {
     flex: 1,
     color: "#f3f7f5",
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "800",
+    lineHeight: 21,
+  },
+  featureTextCompact: {
+    fontSize: 14,
+    lineHeight: 18,
   },
   freeBox: {
     gap: 4,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#2f3d40",
-    padding: 14,
+    padding: 13,
     backgroundColor: "#182326",
+  },
+  freeBoxCompact: {
+    padding: 10,
   },
   freeTitle: {
     color: "#ffffff",
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "900",
+  },
+  freeTitleCompact: {
+    fontSize: 15,
   },
   freeText: {
     color: "#b8c4c2",
+    fontSize: 14,
     lineHeight: 20,
   },
+  freeTextCompact: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  footer: {
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 10,
+    borderTopWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#101718",
+  },
+  footerCompact: {
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+  },
   buy: {
-    minHeight: 58,
+    minHeight: 54,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
     backgroundColor: "#e45b2c",
+  },
+  buyCompact: {
+    minHeight: 48,
   },
   disabledButton: {
     opacity: 0.55,
   },
   buyText: {
     color: "#ffffff",
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "900",
   },
+  buyTextCompact: {
+    fontSize: 15,
+  },
   restoreButton: {
-    minHeight: 42,
+    minHeight: 38,
     alignItems: "center",
     justifyContent: "center",
+  },
+  restoreButtonCompact: {
+    minHeight: 34,
   },
   restoreText: {
     color: "#f3f7f5",
