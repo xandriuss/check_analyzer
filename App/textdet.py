@@ -7,6 +7,7 @@ import unicodedata
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytesseract
 from openai import OpenAI
 
@@ -81,10 +82,181 @@ Rules:
 - deposits = positive PET, skardine, depozitas, depozitine tara, or deposit/imoka lines. Use the final right-side deposit sum, e.g. 0.10 or 0.40.
 - receipt_total = "Kvito suma" or "Moketina suma" final total.
 - Ignore PVM/tax tables, barcodes, cashier/store/card text, but keep deposit lines in deposits.
+- If the receipt image is sideways or upside down, read it after mentally rotating it to normal receipt orientation.
 - Do not use unit/kg/quantity prices as final_price. Example: "4.99 x 1.084 kg" is unit price; use the right-side final line price.
 - Never calculate or guess prices. If the final product price is unclear, skip the item.
 - Keep Lithuanian product names as written. Convert comma decimals to dot numbers.
 """
+
+
+def _rotate_image(img, degrees):
+    if degrees == 90:
+        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+    if degrees == -90:
+        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    if degrees == 180:
+        return cv2.rotate(img, cv2.ROTATE_180)
+    return img
+
+
+def _order_points(points):
+    rect = np.zeros((4, 2), dtype="float32")
+    sums = points.sum(axis=1)
+    diffs = np.diff(points, axis=1)
+
+    rect[0] = points[np.argmin(sums)]
+    rect[2] = points[np.argmax(sums)]
+    rect[1] = points[np.argmin(diffs)]
+    rect[3] = points[np.argmax(diffs)]
+    return rect
+
+
+def _warp_receipt(image, points):
+    rect = _order_points(points.astype("float32"))
+    top_left, top_right, bottom_right, bottom_left = rect
+
+    width_a = np.linalg.norm(bottom_right - bottom_left)
+    width_b = np.linalg.norm(top_right - top_left)
+    max_width = int(max(width_a, width_b))
+
+    height_a = np.linalg.norm(top_right - bottom_right)
+    height_b = np.linalg.norm(top_left - bottom_left)
+    max_height = int(max(height_a, height_b))
+
+    if max_width < 80 or max_height < 120:
+        return None
+
+    destination = np.array(
+        [
+            [0, 0],
+            [max_width - 1, 0],
+            [max_width - 1, max_height - 1],
+            [0, max_height - 1],
+        ],
+        dtype="float32",
+    )
+    matrix = cv2.getPerspectiveTransform(rect, destination)
+    warped = cv2.warpPerspective(image, matrix, (max_width, max_height))
+
+    if warped.shape[1] > warped.shape[0]:
+        warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
+
+    return warped
+
+
+def _receipt_candidate_score(crop, source_width, source_height, x, y, w, h, area):
+    crop_height, crop_width = crop.shape[:2]
+    if crop_width <= 0 or crop_height <= 0:
+        return -1
+
+    crop_gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    aspect = crop_height / max(crop_width, 1)
+    white_ratio = float(np.mean(crop_gray > 150))
+    text_edges = cv2.Canny(crop_gray, 60, 150)
+    text_density = float(np.mean(text_edges > 0))
+    center_distance = abs((x + w / 2) - source_width / 2) / max(source_width / 2, 1)
+    area_ratio = area / max(source_width * source_height, 1)
+    fill_ratio = area / max(w * h, 1)
+
+    if aspect < 1.0:
+        aspect_weight = 0.55
+    else:
+        aspect_weight = 1.0 + min(aspect, 5.0) / 5.0
+
+    return (
+        area_ratio
+        * 10000
+        * (1 - min(center_distance, 0.85) * 0.55)
+        * max(fill_ratio, 0.25)
+        * aspect_weight
+        * (0.65 + white_ratio)
+        * (0.85 + min(text_density * 10, 0.85))
+    )
+
+
+def _contour_to_crop(image, contour):
+    area = cv2.contourArea(contour)
+    height, width = image.shape[:2]
+    if area < width * height * 0.035:
+        return None
+
+    x, y, w, h = cv2.boundingRect(contour)
+    if w < width * 0.10 or h < height * 0.12:
+        return None
+
+    perimeter = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
+    crop = None
+
+    if len(approx) == 4:
+        crop = _warp_receipt(image, approx.reshape(4, 2))
+
+    if crop is None:
+        box = cv2.boxPoints(cv2.minAreaRect(contour))
+        crop = _warp_receipt(image, box)
+
+    if crop is None or crop.size == 0:
+        margin_x = int(w * 0.045)
+        margin_y = int(h * 0.025)
+        x1 = max(x - margin_x, 0)
+        y1 = max(y - margin_y, 0)
+        x2 = min(x + w + margin_x, width)
+        y2 = min(y + h + margin_y, height)
+        crop = image[y1:y2, x1:x2]
+
+    score = _receipt_candidate_score(crop, width, height, x, y, w, h, area)
+    return crop, score
+
+
+def _detect_receipt_crop(img):
+    height, width = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    edge_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    edges = cv2.Canny(gray, 45, 145)
+    edges = cv2.dilate(edges, edge_kernel, iterations=2)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, edge_kernel, iterations=2)
+
+    _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    paper_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (19, 19))
+    threshold = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, paper_kernel, iterations=2)
+
+    candidates = []
+    for mask in (edges, threshold):
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            candidate = _contour_to_crop(img, contour)
+            if candidate is not None:
+                candidates.append(candidate)
+
+    if candidates:
+        cropped, score = max(candidates, key=lambda item: item[1])
+    else:
+        crop_width = int(width * 0.72)
+        x1 = max((width - crop_width) // 2, 0)
+        cropped = img[:, x1 : x1 + crop_width]
+        score = width * height * 0.05
+
+    if cropped.shape[1] > cropped.shape[0]:
+        cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
+
+    return cropped, score
+
+
+def _auto_crop_receipt(img):
+    best_crop = None
+    best_score = -1
+
+    for degrees in (0, 90, -90, 180):
+        rotated = _rotate_image(img, degrees)
+        crop, score = _detect_receipt_crop(rotated)
+        if score > best_score:
+            best_crop = crop
+            best_score = score
+
+    print(f"Auto receipt crop score={best_score:.1f}")
+    return best_crop if best_crop is not None else img
 
 
 def prepare_receipt_image(image_path):
@@ -101,57 +273,7 @@ def prepare_receipt_image(image_path):
     if img is None:
         return image_path
 
-    height, width = img.shape[:2]
-    if width > height:
-        img = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-        height, width = img.shape[:2]
-
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    _, threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 17))
-    threshold = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-    contours, _ = cv2.findContours(threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    candidates = []
-
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < width * height * 0.08:
-            continue
-
-        x, y, w, h = cv2.boundingRect(contour)
-        if h <= w:
-            continue
-
-        candidates.append((area, x, y, w, h))
-
-    if candidates:
-        image_center_x = width / 2
-
-        def candidate_score(item):
-            area, x, _, w, h = item
-            candidate_center_x = x + w / 2
-            center_distance = abs(candidate_center_x - image_center_x) / image_center_x
-            aspect_bonus = min(h / max(w, 1), 4)
-            return area * (1 - min(center_distance, 0.9)) * aspect_bonus
-
-        _, x, y, w, h = max(candidates, key=candidate_score)
-        margin_x = int(w * 0.04)
-        margin_y = int(h * 0.025)
-        x1 = max(x - margin_x, 0)
-        y1 = max(y - margin_y, 0)
-        x2 = min(x + w + margin_x, width)
-        y2 = min(y + h + margin_y, height)
-        cropped = img[y1:y2, x1:x2]
-    else:
-        crop_width = int(width * 0.72)
-        x1 = max((width - crop_width) // 2, 0)
-        cropped = img[:, x1 : x1 + crop_width]
-
-    if cropped.shape[1] > cropped.shape[0]:
-        cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
+    cropped = _auto_crop_receipt(img)
 
     long_edge = max(cropped.shape[:2])
     scale = min(1.0, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))
