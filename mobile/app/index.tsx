@@ -113,10 +113,10 @@ export default function LoginScreen() {
       </View>
       {isRegistering && (
         <View style={styles.field}>
-          <Text style={styles.inputLabel}>{mode === "family" ? "Family name" : "Your name"}</Text>
+          <Text style={styles.inputLabel}>{mode === "family" ? "Family name (optional)" : "Name (optional)"}</Text>
           <TextInput
             onChangeText={setDisplayName}
-            placeholder={mode === "family" ? "Example: Dovydonis family" : "Example: Andrius"}
+            placeholder={mode === "family" ? "Your family name" : "Your name"}
             placeholderTextColor="#7b8684"
             style={styles.input}
             value={displayName}
