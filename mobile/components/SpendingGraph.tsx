@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 
 import { getReceipts, Receipt } from "@/lib/api";
 import { useAuth } from "@/context/auth";
-import { useI18n } from "@/lib/i18n";
+import { type TranslationKey, useI18n } from "@/lib/i18n";
 
 type ChartPeriod = "week" | "month" | "year";
 type ChartPoint = {
@@ -11,6 +11,14 @@ type ChartPoint = {
   junk: number;
   useful: number;
   deposit: number;
+};
+type WasteCategory = "drinks" | "foods" | "candies" | "lottery";
+
+const CATEGORY_COLORS: Record<WasteCategory, string> = {
+  drinks: "#167a8b",
+  foods: "#b3261e",
+  candies: "#c04aa0",
+  lottery: "#b7791f",
 };
 
 export function SpendingGraph() {
@@ -23,6 +31,7 @@ export function SpendingGraph() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const chartPoints = useMemo(() => buildChartPoints(receipts, period), [period, receipts]);
+  const categoryTotals = useMemo(() => buildWasteCategoryTotals(receiptsInPeriod(receipts, period), t), [period, receipts, t]);
   const totals = useMemo(
     () =>
       chartPoints.reduce(
@@ -85,6 +94,33 @@ export function SpendingGraph() {
         </View>
       </View>
 
+      <View style={[styles.categoryPanel, dark && styles.darkPanel]}>
+        <View>
+          <Text style={[styles.chartTitle, dark && styles.darkText]}>{t("wasteByCategory")}</Text>
+          <Text style={[styles.chartSubtitle, dark && styles.darkMuted]}>{t("wasteByCategoryHelp")}</Text>
+        </View>
+        <View style={styles.categoryList}>
+          {categoryTotals.map((category) => (
+            <View key={category.key} style={styles.categoryItem}>
+              <View style={styles.categoryTop}>
+                <Text style={[styles.categoryName, dark && styles.darkText]}>{category.label}</Text>
+                <Text style={[styles.categoryAmount, { color: category.color }]}>
+                  {category.total.toFixed(2)} EUR
+                </Text>
+              </View>
+              <View style={[styles.categoryTrack, dark && styles.darkTrack]}>
+                <View
+                  style={[
+                    styles.categoryFill,
+                    { width: `${category.share}%`, backgroundColor: category.color },
+                  ]}
+                />
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+
       <View
         onLayout={(event) => setChartWidth(event.nativeEvent.layout.width)}
         style={[styles.chartPanel, dark && styles.darkPanel]}
@@ -109,6 +145,170 @@ export function SpendingGraph() {
       )}
     </View>
   );
+}
+
+function receiptsInPeriod(receipts: Receipt[], period: ChartPeriod) {
+  const sorted = [...receipts].sort((a, b) => getReceiptTime(a) - getReceiptTime(b));
+  if (sorted.length === 0) {
+    return [];
+  }
+
+  const now = startOfDay(new Date());
+  const maxDays = period === "week" ? 7 : period === "month" ? 30 : 365;
+  const earliestAllowed = addDays(now, -(maxDays - 1));
+  return sorted.filter((receipt) => getReceiptDate(receipt) >= earliestAllowed);
+}
+
+function buildWasteCategoryTotals(receipts: Receipt[], t: (key: TranslationKey) => string) {
+  const totals: Record<WasteCategory, number> = {
+    drinks: 0,
+    foods: 0,
+    candies: 0,
+    lottery: 0,
+  };
+
+  receipts.forEach((receipt) => {
+    receipt.items.forEach((item) => {
+      const category = detectWasteCategory(item.name, item.is_junk);
+      if (!category) return;
+
+      const price = Number(item.price) || 0;
+      if (price >= 0 && !item.is_junk) return;
+
+      totals[category] += price;
+    });
+  });
+
+  const normalized = (Object.keys(totals) as WasteCategory[]).map((key) => ({
+    key,
+    label: t(key),
+    total: Math.max(totals[key], 0),
+    color: CATEGORY_COLORS[key],
+    share: 0,
+  }));
+  const maxTotal = Math.max(...normalized.map((category) => category.total), 0.01);
+
+  return normalized
+    .map((category) => ({
+      ...category,
+      share: Math.max((category.total / maxTotal) * 100, category.total > 0 ? 4 : 0),
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function detectWasteCategory(name: string, isJunk: boolean): WasteCategory | null {
+  const normalized = normalizeName(name);
+
+  if (hasAny(normalized, [
+    "loterija",
+    "bilietas",
+    "bilietai",
+    "loto",
+    "vikinglotto",
+    "teleloto",
+    "eurojackpot",
+    "kenoloto",
+    "superloto",
+    "nutrinamas",
+    "scratch",
+  ])) {
+    return "lottery";
+  }
+
+  if (hasAny(normalized, [
+    "coca cola",
+    "coca",
+    "cola",
+    "c0la",
+    "pepsi",
+    "fanta",
+    "sprite",
+    "red bull",
+    "monster",
+    "battery",
+    "dynamit",
+    "prime",
+    "oshee",
+    "energinis",
+    "energetinis",
+    "gazuotas",
+    "limonadas",
+    "alus",
+    "sidras",
+    "degtine",
+    "vynas",
+    "likeris",
+    "kokteilis",
+  ])) {
+    return "drinks";
+  }
+
+  if (hasAny(normalized, [
+    "guminukai",
+    "gummy",
+    "saldainiai",
+    "saldainis",
+    "sokoladas",
+    "chocolate",
+    "kinder",
+    "haribo",
+    "candy pop",
+    "roshen",
+    "milka",
+    "snickers",
+    "mars",
+    "twix",
+    "bounty",
+    "skittles",
+    "rafaello",
+    "ferrero",
+    "ciulpinukai",
+    "ledinukai",
+  ])) {
+    return "candies";
+  }
+
+  if (hasAny(normalized, [
+    "traskuciai",
+    "cipsai",
+    "chips",
+    "nacho",
+    "cheese balls",
+    "taffel",
+    "estrella",
+    "lays",
+    "pringles",
+    "pyragas",
+    "bandel",
+    "spurga",
+    "sausainiai",
+    "vafliai",
+    "pica",
+    "burger",
+    "mesainis",
+    "kebabas",
+    "desreles",
+    "desra",
+    "saliami",
+  ])) {
+    return "foods";
+  }
+
+  return isJunk ? "foods" : null;
+}
+
+function normalizeName(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasAny(value: string, words: string[]) {
+  return words.some((word) => value.includes(word));
 }
 
 function buildChartPoints(receipts: Receipt[], period: ChartPeriod): ChartPoint[] {
@@ -411,6 +611,46 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "900",
   },
+  categoryPanel: {
+    gap: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e1dbcf",
+    padding: 14,
+    backgroundColor: "#ffffff",
+  },
+  categoryList: {
+    gap: 12,
+  },
+  categoryItem: {
+    gap: 7,
+  },
+  categoryTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  categoryName: {
+    flex: 1,
+    color: "#1b2a2f",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  categoryAmount: {
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  categoryTrack: {
+    height: 9,
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: "#eee8dc",
+  },
+  categoryFill: {
+    height: "100%",
+    borderRadius: 999,
+  },
   chartPanel: {
     gap: 18,
     borderRadius: 8,
@@ -513,5 +753,8 @@ const styles = StyleSheet.create({
   },
   darkMuted: {
     color: "#b8c4c2",
+  },
+  darkTrack: {
+    backgroundColor: "#2f3d40",
   },
 });
