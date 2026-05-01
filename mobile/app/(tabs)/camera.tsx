@@ -1,6 +1,6 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
-import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
+import { manipulateAsync, SaveFormat, type Action } from "expo-image-manipulator";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -31,6 +31,11 @@ type CapturedPhoto = {
   height?: number;
   exif?: Record<string, any>;
 };
+
+const CAMERA_PHOTO_QUALITY = 0.88;
+const PREVIEW_JPEG_QUALITY = 0.9;
+const SCAN_JPEG_QUALITY = 0.82;
+const SCAN_MAX_LONG_EDGE = 1900;
 
 export default function CameraScreen() {
   const { token, user } = useAuth();
@@ -181,8 +186,8 @@ export default function CameraScreen() {
     setError("");
     try {
       const picture = await cameraRef.current?.takePictureAsync({
-        exif: true,
-        quality: 0.9,
+        exif: false,
+        quality: CAMERA_PHOTO_QUALITY,
         skipProcessing: false,
       });
       if (picture?.uri) {
@@ -451,7 +456,7 @@ async function cropReceiptPhoto(
   previewLayout?: Rect | null,
 ) {
   const normalized = await manipulateAsync(photo.uri, [], {
-    compress: 0.94,
+    compress: PREVIEW_JPEG_QUALITY,
     format: SaveFormat.JPEG,
   });
   const imageWidth = normalized.width || photo.width;
@@ -465,32 +470,25 @@ async function cropReceiptPhoto(
     ? cropFromManualRect(cropRect, previewLayout, imageWidth, imageHeight)
     : centeredReceiptCrop(imageWidth, imageHeight);
 
-  const result = await manipulateAsync(
-    normalized.uri,
-    [
-      {
-        crop,
-      },
-    ],
-    { compress: 0.92, format: SaveFormat.JPEG },
-  );
+  const actions: Action[] = [{ crop }];
+  const resize = resizeActionForScan(crop.width, crop.height);
+  if (resize) {
+    actions.push(resize);
+  }
+
+  const result = await manipulateAsync(normalized.uri, actions, {
+    compress: SCAN_JPEG_QUALITY,
+    format: SaveFormat.JPEG,
+  });
 
   return result.uri;
 }
 
 async function normalizeCapturedPhoto(photo: CapturedPhoto): Promise<CapturedPhoto> {
-  const rotation = exifRotation(photo.exif);
-  let normalized = await manipulateAsync(photo.uri, rotation ? [{ rotate: rotation }] : [], {
-    compress: 0.94,
+  const normalized = await manipulateAsync(photo.uri, [], {
+    compress: PREVIEW_JPEG_QUALITY,
     format: SaveFormat.JPEG,
   });
-
-  if ((normalized.width ?? photo.width ?? 0) > (normalized.height ?? photo.height ?? 0) * 1.08) {
-    normalized = await manipulateAsync(normalized.uri, [{ rotate: 90 }], {
-      compress: 0.94,
-      format: SaveFormat.JPEG,
-    });
-  }
 
   return {
     uri: normalized.uri,
@@ -501,7 +499,7 @@ async function normalizeCapturedPhoto(photo: CapturedPhoto): Promise<CapturedPho
 
 async function rotateCropPreviewPhoto(photo: CapturedPhoto): Promise<CapturedPhoto> {
   const rotated = await manipulateAsync(photo.uri, [{ rotate: 90 }], {
-    compress: 0.94,
+    compress: PREVIEW_JPEG_QUALITY,
     format: SaveFormat.JPEG,
   });
 
@@ -510,22 +508,6 @@ async function rotateCropPreviewPhoto(photo: CapturedPhoto): Promise<CapturedPho
     width: rotated.width || photo.height,
     height: rotated.height || photo.width,
   };
-}
-
-function exifRotation(exif?: Record<string, any>) {
-  const orientation = Number(exif?.Orientation ?? exif?.orientation);
-
-  if (orientation === 3) {
-    return 180;
-  }
-  if (orientation === 6) {
-    return 90;
-  }
-  if (orientation === 8) {
-    return -90;
-  }
-
-  return 0;
 }
 
 function layoutToRect(event: LayoutChangeEvent) {
@@ -573,6 +555,19 @@ function cropFromManualRect(crop: Rect, view: Rect, imageWidth: number, imageHei
     imageWidth,
     imageHeight,
   );
+}
+
+function resizeActionForScan(width: number, height: number): Action | null {
+  const longEdge = Math.max(width, height);
+  if (longEdge <= SCAN_MAX_LONG_EDGE) {
+    return null;
+  }
+
+  if (width >= height) {
+    return { resize: { width: SCAN_MAX_LONG_EDGE } };
+  }
+
+  return { resize: { height: SCAN_MAX_LONG_EDGE } };
 }
 
 function clampRect(rect: Rect, bounds: Rect) {

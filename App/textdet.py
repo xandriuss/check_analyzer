@@ -9,6 +9,8 @@ import cv2
 import pytesseract
 from openai import OpenAI
 
+PREPARED_MAX_LONG_EDGE = 2200
+
 try:
     from dotenv import load_dotenv
 
@@ -141,7 +143,11 @@ def prepare_receipt_image(image_path):
     if cropped.shape[1] > cropped.shape[0]:
         cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
 
-    cropped = cv2.resize(cropped, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    long_edge = max(cropped.shape[:2])
+    scale = min(1.5, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))
+    if abs(scale - 1.0) > 0.03:
+        cropped = cv2.resize(cropped, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
     cropped_gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
     cropped_gray = cv2.bilateralFilter(cropped_gray, 7, 45, 45)
     enhanced = cv2.adaptiveThreshold(
@@ -154,7 +160,7 @@ def prepare_receipt_image(image_path):
     )
 
     prepared_path = Path(image_path).with_name(f"{Path(image_path).stem}_scan.jpg")
-    cv2.imwrite(str(prepared_path), enhanced)
+    cv2.imwrite(str(prepared_path), enhanced, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
     return str(prepared_path)
 
 

@@ -536,6 +536,15 @@ def calculated_scan_total(pairs, discounts):
     )
 
 
+def scan_total_matches_receipt(pairs, discounts, receipt_total):
+    if receipt_total is None:
+        return False
+
+    calculated = calculated_scan_total(pairs, discounts)
+    tolerance = max(0.65, receipt_total * 0.01)
+    return abs(calculated - receipt_total) <= tolerance
+
+
 def has_repeated_price_hallucination(pairs):
     if len(pairs) < 5:
         return False
@@ -798,15 +807,14 @@ async def upload(
                     status_code=422,
                     detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
                 )
-        elif not discounts or receipt_total is None:
+        elif receipt_total is None or (
+            not discounts and not scan_total_matches_receipt(pairs, discounts, receipt_total)
+        ):
             fallback_data = get_ocr_data()
             if not discounts:
                 discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             if receipt_total is None:
                 receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
-        elif any(is_generic_discount_name(name) for name, _ in discounts):
-            fallback_data = get_ocr_data()
-            discounts = merge_specific_ocr_discounts(discounts, parse_discounts(fallback_data.get("discounts", [])))
 
         discounts = remove_duplicate_discounts(discounts)
 
