@@ -571,6 +571,20 @@ def waste_percent(total, junk_total):
     return round((junk_total / total) * 100, 1)
 
 
+def receipt_junk_total_from_items(receipt: Receipt):
+    if not receipt.items:
+        return round(max(float(receipt.junk_total or 0), 0), 2)
+
+    junk_total = round(
+        sum(float(item.price or 0) for item in receipt.items if item.is_junk),
+        2,
+    )
+    junk_total = max(junk_total, 0)
+    if receipt.total and receipt.total > 0:
+        junk_total = min(junk_total, float(receipt.total))
+    return round(junk_total, 2)
+
+
 def weekly_scan_count(user: User, db: Session):
     since = datetime.utcnow() - timedelta(days=7)
     return (
@@ -806,9 +820,6 @@ async def upload(
         junk_lookup = set(junk_items)
         junk_discount_items = []
         junk_discount_total = 0.0
-        positive_item_total = round(sum(float(price) for _, price in pairs if float(price) > 0), 2)
-        junk_positive_total = round(sum(float(price) for _, price in junk_items if float(price) > 0), 2)
-        generic_discount_total = 0.0
 
         for name, amount in discounts:
             if is_excluded_junk(name, exclusions):
@@ -821,15 +832,6 @@ async def upload(
             if discount_targets_junk_item(name, junk_items):
                 junk_discount_total += discount_value
                 junk_discount_items.append((name, f"{discount_value:.2f}"))
-            elif is_generic_discount_name(name):
-                generic_discount_total += discount_value
-
-        if positive_item_total > 0 and junk_positive_total > 0 and generic_discount_total:
-            junk_share = min(max(junk_positive_total / positive_item_total, 0), 1)
-            prorated_discount = round(generic_discount_total * junk_share, 2)
-            junk_discount_total += prorated_discount
-            if prorated_discount:
-                junk_discount_items.append(("Prorated receipt discounts for junk items", f"{prorated_discount:.2f}"))
 
         junk_total = round(max(junk_total + junk_discount_total, 0), 2)
         calculated_total = calculated_scan_total(pairs, discounts)
@@ -917,6 +919,29 @@ async def upload(
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+def serialize_receipt(receipt: Receipt):
+    computed_junk_total = receipt_junk_total_from_items(receipt)
+    return {
+        "id": receipt.id,
+        "date": receipt.created_at,
+        "total": receipt.total,
+        "junk_total": computed_junk_total,
+        "waste_percent": waste_percent(receipt.total, computed_junk_total),
+        "photo_url": f"/{receipt.photo_path}" if receipt.photo_path else None,
+        "scan_url": f"/{receipt.scan_path}" if receipt.scan_path else None,
+        "ai_output": receipt.ai_output,
+        "ocr_output": receipt.ocr_output,
+        "items": [
+            {
+                "name": item.name,
+                "price": item.price,
+                "is_junk": bool(item.is_junk),
+            }
+            for item in receipt.items
+        ],
+    }
+
+
 @app.get("/receipts")
 def get_receipts(
     user: User = Depends(get_current_user),
@@ -929,35 +954,14 @@ def get_receipts(
         .all()
     )
 
-    return [
-        {
-            "id": receipt.id,
-            "date": receipt.created_at,
-            "total": receipt.total,
-            "junk_total": receipt.junk_total,
-            "waste_percent": waste_percent(receipt.total, receipt.junk_total),
-            "photo_url": f"/{receipt.photo_path}" if receipt.photo_path else None,
-            "scan_url": f"/{receipt.scan_path}" if receipt.scan_path else None,
-            "ai_output": receipt.ai_output,
-            "ocr_output": receipt.ocr_output,
-            "items": [
-                {
-                    "name": item.name,
-                    "price": item.price,
-                    "is_junk": bool(item.is_junk),
-                }
-                for item in receipt.items
-            ],
-        }
-        for receipt in receipts
-    ]
+    return [serialize_receipt(receipt) for receipt in receipts]
 
 
 @app.get("/subscription-summary")
 def subscription_summary(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     receipts = db.query(Receipt).filter(Receipt.user_id == user.id).all()
     total = round(sum(receipt.total or 0 for receipt in receipts), 2)
-    junk_total = round(sum(receipt.junk_total or 0 for receipt in receipts), 2)
+    junk_total = round(sum(receipt_junk_total_from_items(receipt) for receipt in receipts), 2)
     total_waste_percent = waste_percent(total, junk_total)
 
     if not user.is_subscriber:
@@ -971,7 +975,7 @@ def subscription_summary(user: User = Depends(get_current_user), db: Session = D
     since = datetime.utcnow() - timedelta(days=30)
     monthly_receipts = [receipt for receipt in receipts if receipt.created_at and receipt.created_at >= since]
     monthly_total = round(sum(receipt.total or 0 for receipt in monthly_receipts), 2)
-    monthly_junk = round(sum(receipt.junk_total or 0 for receipt in monthly_receipts), 2)
+    monthly_junk = round(sum(receipt_junk_total_from_items(receipt) for receipt in monthly_receipts), 2)
 
     return {
         "locked": False,

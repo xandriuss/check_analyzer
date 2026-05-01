@@ -1,4 +1,5 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
+import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -40,6 +41,7 @@ export default function CameraScreen() {
   const [usage, setUsage] = useState<UsageStatus | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
   const [adPlaying, setAdPlaying] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(8);
   const [previewLayout, setPreviewLayout] = useState<Rect | null>(null);
@@ -193,6 +195,7 @@ export default function CameraScreen() {
         setPhoto(normalized);
         setCropRect(null);
         setResult(null);
+        setTorchOn(false);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not take photo");
@@ -249,10 +252,19 @@ export default function CameraScreen() {
       {!photo ? (
         <CameraView
           ref={cameraRef}
+          enableTorch={torchOn}
           responsiveOrientationWhenOrientationLocked={false}
           style={styles.camera}
         >
           <View style={styles.cameraShade}>
+            <Pressable
+              accessibilityLabel={torchOn ? "Turn flashlight off" : "Turn flashlight on"}
+              onPress={() => setTorchOn((value) => !value)}
+              style={[styles.torchButton, torchOn && styles.torchButtonActive]}
+            >
+              <MaterialIcons color={torchOn ? "#183f45" : "#ffffff"} name={torchOn ? "flash-on" : "flash-off"} size={24} />
+            </Pressable>
+
             {result && (
               <View style={styles.totalPanel}>
                 <View>
@@ -729,6 +741,24 @@ const styles = StyleSheet.create({
     borderWidth: 7,
     borderColor: "#ffffff",
     backgroundColor: "#e45b2c",
+  },
+  torchButton: {
+    position: "absolute",
+    top: 52,
+    right: 20,
+    zIndex: 5,
+    width: 46,
+    height: 46,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 23,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.38)",
+    backgroundColor: "rgba(0,0,0,0.42)",
+  },
+  torchButtonActive: {
+    borderColor: "#ffffff",
+    backgroundColor: "rgba(255,255,255,0.92)",
   },
   totalPanel: {
     flexDirection: "row",
