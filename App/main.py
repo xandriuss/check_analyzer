@@ -536,13 +536,96 @@ def calculated_scan_total(pairs, discounts):
     )
 
 
-def scan_total_matches_receipt(pairs, discounts, receipt_total):
+def scan_total_delta(pairs, discounts, receipt_total):
     if receipt_total is None:
+        return None
+    return round(calculated_scan_total(pairs, discounts) - receipt_total, 2)
+
+
+def is_likely_missing_deposit_delta(delta):
+    if delta is None or delta >= 0:
         return False
 
-    calculated = calculated_scan_total(pairs, discounts)
-    tolerance = max(0.65, receipt_total * 0.01)
-    return abs(calculated - receipt_total) <= tolerance
+    absolute_delta = abs(delta)
+    if absolute_delta < 0.08 or absolute_delta > 1.2:
+        return False
+
+    nearest_tenth = round(absolute_delta * 10) / 10
+    return abs(absolute_delta - nearest_tenth) <= 0.025
+
+
+def scan_total_matches_receipt(pairs, discounts, receipt_total):
+    delta = scan_total_delta(pairs, discounts, receipt_total)
+    if delta is None:
+        return False
+
+    tolerance = max(0.12, receipt_total * 0.002)
+    return abs(delta) <= tolerance or is_likely_missing_deposit_delta(delta)
+
+
+def item_price_is_reasonable(ai_price, ocr_price):
+    if ocr_price <= 0:
+        return False
+
+    max_delta = max(1.0, abs(ai_price) * 0.35)
+    return abs(ai_price - ocr_price) <= max_delta
+
+
+def choose_corrected_item_name(ai_name, ocr_name):
+    if not ocr_name or len(ocr_name) > max(len(ai_name) * 1.5, 48):
+        return ai_name
+
+    similarity = SequenceMatcher(None, normalize_match_text(ai_name), normalize_match_text(ocr_name)).ratio()
+    return ocr_name if similarity >= 0.58 else ai_name
+
+
+def merge_ocr_item_prices(pairs, discounts, receipt_total, ocr_pairs):
+    if receipt_total is None or not pairs or not ocr_pairs:
+        return pairs
+
+    merged = [(name, price) for name, price in pairs]
+    unused_ocr_indexes = set(range(len(ocr_pairs)))
+    current_delta = abs(scan_total_delta(merged, discounts, receipt_total) or 0)
+
+    while current_delta > 0.08:
+        best = None
+
+        for item_index, (ai_name, ai_price_text) in enumerate(merged):
+            ai_price = float(ai_price_text)
+
+            for ocr_index in unused_ocr_indexes:
+                ocr_name, ocr_price_text = ocr_pairs[ocr_index]
+                ocr_price = float(ocr_price_text)
+
+                if not item_price_is_reasonable(ai_price, ocr_price):
+                    continue
+                if not is_same_discount_product(ai_name, ocr_name):
+                    continue
+
+                trial = list(merged)
+                trial[item_index] = (
+                    choose_corrected_item_name(ai_name, ocr_name),
+                    f"{ocr_price:.2f}",
+                )
+                trial_delta = abs(scan_total_delta(trial, discounts, receipt_total) or 0)
+
+                if trial_delta + 0.025 < current_delta and (best is None or trial_delta < best["delta"]):
+                    best = {
+                        "item_index": item_index,
+                        "ocr_index": ocr_index,
+                        "name": trial[item_index][0],
+                        "price": trial[item_index][1],
+                        "delta": trial_delta,
+                    }
+
+        if not best:
+            break
+
+        merged[best["item_index"]] = (best["name"], best["price"])
+        unused_ocr_indexes.remove(best["ocr_index"])
+        current_delta = best["delta"]
+
+    return fix_quantity_errors(merged)
 
 
 def has_repeated_price_hallucination(pairs):
@@ -807,14 +890,18 @@ async def upload(
                     status_code=422,
                     detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
                 )
-        elif receipt_total is None or (
-            not discounts and not scan_total_matches_receipt(pairs, discounts, receipt_total)
-        ):
+        elif receipt_total is None or not scan_total_matches_receipt(pairs, discounts, receipt_total):
             fallback_data = get_ocr_data()
+            ocr_pairs = parse_pairs(fallback_data.get("items", []))
+            ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
+            ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
+
             if not discounts:
-                discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
+                discounts = ocr_discounts
             if receipt_total is None:
-                receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
+                receipt_total = ocr_receipt_total
+
+            pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, ocr_pairs)
 
         discounts = remove_duplicate_discounts(discounts)
 
