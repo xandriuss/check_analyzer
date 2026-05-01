@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import time
 import unicodedata
 from pathlib import Path
 
@@ -9,7 +10,10 @@ import cv2
 import pytesseract
 from openai import OpenAI
 
-PREPARED_MAX_LONG_EDGE = 2200
+PREPARED_MAX_LONG_EDGE = 1600
+PREPARED_JPEG_QUALITY = 76
+OCR_TARGET_WIDTH = 1500
+OCR_TIMEOUT_SECONDS = 8
 
 try:
     from dotenv import load_dotenv
@@ -88,6 +92,11 @@ def prepare_receipt_image(image_path):
         print("Image not found:", image_path)
         return image_path
 
+    source_path = Path(image_path)
+    prepared_path = source_path.with_name(f"{source_path.stem}_scan.jpg")
+    if prepared_path.exists() and prepared_path.stat().st_mtime >= source_path.stat().st_mtime:
+        return str(prepared_path)
+
     img = cv2.imread(image_path)
     if img is None:
         return image_path
@@ -145,9 +154,9 @@ def prepare_receipt_image(image_path):
         cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
 
     long_edge = max(cropped.shape[:2])
-    scale = min(1.5, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))
+    scale = min(1.0, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))
     if abs(scale - 1.0) > 0.03:
-        cropped = cv2.resize(cropped, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        cropped = cv2.resize(cropped, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
     cropped_gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
     cropped_gray = cv2.bilateralFilter(cropped_gray, 7, 45, 45)
@@ -160,8 +169,7 @@ def prepare_receipt_image(image_path):
         9,
     )
 
-    prepared_path = Path(image_path).with_name(f"{Path(image_path).stem}_scan.jpg")
-    cv2.imwrite(str(prepared_path), enhanced, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+    cv2.imwrite(str(prepared_path), enhanced, [int(cv2.IMWRITE_JPEG_QUALITY), PREPARED_JPEG_QUALITY])
     return str(prepared_path)
 
 
@@ -238,7 +246,8 @@ def ai_parse_receipt(image_path):
         print("Image not found:", image_path)
         return _empty_result()
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    start = time.perf_counter()
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=45.0)
     scan_path = prepare_receipt_image(image_path)
 
     with open(scan_path, "rb") as f:
@@ -246,6 +255,7 @@ def ai_parse_receipt(image_path):
 
     response = client.responses.create(
         model="gpt-4.1-mini",
+        max_output_tokens=1800,
         input=[
             {
                 "role": "user",
@@ -261,6 +271,7 @@ def ai_parse_receipt(image_path):
     )
 
     result = response.output_text
+    print(f"AI receipt parse took {time.perf_counter() - start:.2f}s")
     print("\n=== AI RAW ===")
     print(result)
 
@@ -310,10 +321,9 @@ def _ocr_score(text, confidence=0):
 
 def _resize_for_ocr(gray):
     _, width = gray.shape[:2]
-    target_width = 1700
-    if width >= target_width:
+    if width >= OCR_TARGET_WIDTH:
         return gray
-    scale = target_width / max(width, 1)
+    scale = OCR_TARGET_WIDTH / max(width, 1)
     return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
 
@@ -349,7 +359,6 @@ def _ocr_variants(img):
         9,
     )
     return [
-        ("gray", gray),
         ("sharpened", sharpened),
         ("otsu", otsu),
         ("adaptive", adaptive),
@@ -380,25 +389,34 @@ def _read_ocr_text(img):
     configs = [
         "--oem 3 --psm 6 -c preserve_interword_spaces=1",
         "--oem 3 --psm 4 -c preserve_interword_spaces=1",
-        "--oem 3 --psm 11 -c preserve_interword_spaces=1",
     ]
     best = {"text": "", "score": -1, "variant": "", "confidence": 0}
+    start = time.perf_counter()
 
     for variant_name, variant in _ocr_variants(img):
         for config in configs:
-            text = pytesseract.image_to_string(variant, lang="lit+eng", config=config)
-            confidence = _ocr_confidence(variant, config)
-            score = _ocr_score(text, confidence)
+            try:
+                text = pytesseract.image_to_string(
+                    variant,
+                    lang="lit+eng",
+                    config=config,
+                    timeout=OCR_TIMEOUT_SECONDS,
+                )
+            except RuntimeError as exc:
+                print(f"OCR variant={variant_name} timed out: {exc}")
+                continue
+
+            score = _ocr_score(text)
             if score > best["score"]:
                 best = {
                     "text": text,
                     "score": score,
                     "variant": variant_name,
-                    "confidence": confidence,
+                    "confidence": 0,
                 }
 
     print(
-        f"OCR selected variant={best.get('variant')} confidence={best.get('confidence', 0):.1f} score={best.get('score', 0):.1f}"
+        f"OCR selected variant={best.get('variant')} score={best.get('score', 0):.1f} took {time.perf_counter() - start:.2f}s"
     )
     return best["text"]
 

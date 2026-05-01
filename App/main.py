@@ -653,13 +653,22 @@ def scan_total_matches_receipt(pairs, discounts, receipt_total):
 
 def scan_needs_ocr_support(pairs, discounts, receipt_total):
     if receipt_total is None:
-        return True
+        return False
 
     delta = scan_total_delta(pairs, discounts, receipt_total)
     if not scan_total_matches_receipt(pairs, discounts, receipt_total):
         return True
 
     return bool(is_likely_missing_deposit_delta(delta) and not extract_deposit_pairs(pairs))
+
+
+def add_inferred_deposit_pair(pairs, discounts, receipt_total):
+    delta = scan_total_delta(pairs, discounts, receipt_total)
+    if not is_likely_missing_deposit_delta(delta) or extract_deposit_pairs(pairs):
+        return pairs
+
+    deposit_value = abs(delta)
+    return merge_deposit_pairs(pairs, [("Depozitas", f"{deposit_value:.2f}")])
 
 
 def item_price_is_reasonable(ai_price, ocr_price):
@@ -996,6 +1005,7 @@ async def upload(
         )
         discounts = remove_duplicate_discounts(parse_discounts(data.get("discounts", [])))
         receipt_total = parse_receipt_total(data.get("receipt_total"))
+        pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
 
         if not scan_result_is_plausible(pairs, discounts, receipt_total):
             fallback_data = get_ocr_data()
@@ -1005,6 +1015,7 @@ async def upload(
             )
             ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
+            ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, ocr_receipt_total)
 
             if scan_result_is_plausible(ocr_pairs, ocr_discounts, ocr_receipt_total):
                 data = fallback_data
@@ -1024,6 +1035,7 @@ async def upload(
             )
             ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
+            ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, ocr_receipt_total)
 
             if not discounts:
                 discounts = ocr_discounts
