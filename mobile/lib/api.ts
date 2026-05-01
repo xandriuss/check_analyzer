@@ -1,6 +1,9 @@
 import { Platform } from "react-native";
 
 const PRODUCTION_API_URL = "https://checkanalyzer-production.up.railway.app";
+const RAW_API_URL =
+  process.env.EXPO_PUBLIC_API_URL ??
+  (Platform.OS === "web" ? "http://localhost:8000" : PRODUCTION_API_URL);
 
 export type AppMode = "person" | "family";
 
@@ -79,9 +82,7 @@ export type SubscriptionConfig = {
   plans: SubscriptionPlan[];
 };
 
-export const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ??
-  (Platform.OS === "web" ? "http://localhost:8000" : PRODUCTION_API_URL);
+export const API_URL = RAW_API_URL.replace(/\/+$/, "");
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
@@ -127,28 +128,46 @@ export function getMe(token: string) {
   });
 }
 
-export async function uploadReceipt(uri: string, token: string) {
-  const form = new FormData();
-  form.append("file", {
-    uri,
-    name: "receipt.jpg",
-    type: "image/jpeg",
-  } as any);
+export function uploadReceipt(uri: string, token: string) {
+  return new Promise<Receipt>((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", {
+      uri,
+      name: "receipt.jpg",
+      type: "image/jpeg",
+    } as any);
 
-  const response = await fetch(`${API_URL}/upload`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    body: form,
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/upload`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.timeout = 180000;
+
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        data = {};
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data as Receipt);
+        return;
+      }
+
+      reject(new Error(data.detail || data.error || `Upload failed (${xhr.status})`));
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Could not reach the scan server. Check internet and try again."));
+    };
+
+    xhr.ontimeout = () => {
+      reject(new Error("Scan took too long. Try a tighter crop or clearer photo."));
+    };
+
+    xhr.send(form);
   });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.detail || data.error || "Upload failed");
-  }
-
-  return data as Receipt;
 }
 
 export async function getReceipts(token: string) {

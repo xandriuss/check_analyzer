@@ -34,8 +34,8 @@ type CapturedPhoto = {
 
 const CAMERA_PHOTO_QUALITY = 0.88;
 const PREVIEW_JPEG_QUALITY = 0.9;
-const SCAN_JPEG_QUALITY = 0.82;
-const SCAN_MAX_LONG_EDGE = 1900;
+const SCAN_JPEG_QUALITY = 0.78;
+const SCAN_MAX_LONG_EDGE = 1700;
 
 export default function CameraScreen() {
   const { token, user } = useAuth();
@@ -530,8 +530,8 @@ function containedImageRect(view: Rect, imageWidth = 1, imageHeight = 1) {
 function defaultCropRect(view: Rect, imageWidth = 1, imageHeight = 1) {
   const bounds = containedImageRect(view, imageWidth, imageHeight);
   const portraitReceipt = bounds.height >= bounds.width;
-  const width = bounds.width * (portraitReceipt ? 0.74 : 0.46);
-  const height = bounds.height * (portraitReceipt ? 0.68 : 0.74);
+  const width = bounds.width * (portraitReceipt ? 0.82 : 0.58);
+  const height = bounds.height * (portraitReceipt ? 0.88 : 0.82);
   return clampRect(
     {
       x: bounds.x + (bounds.width - width) / 2,
