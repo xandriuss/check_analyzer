@@ -70,12 +70,13 @@ EXTRA PRICE RULES:
 """
 
 AI_PROMPT = """Read a Lithuanian grocery receipt image. Return ONLY valid JSON, no markdown.
-Schema: {"items":[{"name":"...","final_price":0.00}],"discounts":[{"name":"...","amount":-0.00}],"receipt_total":0.00}
+Schema: {"items":[{"name":"...","final_price":0.00}],"discounts":[{"name":"...","amount":-0.00}],"deposits":[{"name":"...","amount":0.00}],"receipt_total":0.00}
 Rules:
 - items = bought product lines only, with the final right-side line price.
 - discounts = negative discount lines, including product discounts like "Aciu nuolaida prekei:..." and generic discounts like "ACIU nuolaidos", "Suteiktos naudos", "Pritaikytos nuolaidos".
+- deposits = positive PET, skardine, depozitas, depozitine tara, or deposit/imoka lines. Use the final right-side deposit sum, e.g. 0.10 or 0.40.
 - receipt_total = "Kvito suma" or "Moketina suma" final total.
-- Ignore PVM/tax tables, barcodes, cashier/store/card text, deposit/PET/skardine/depozitine tara lines.
+- Ignore PVM/tax tables, barcodes, cashier/store/card text, but keep deposit lines in deposits.
 - Do not use unit/kg/quantity prices as final_price. Example: "4.99 x 1.084 kg" is unit price; use the right-side final line price.
 - Never calculate or guess prices. If the final product price is unclear, skip the item.
 - Keep Lithuanian product names as written. Convert comma decimals to dot numbers.
@@ -168,6 +169,7 @@ def _empty_result(scan_path=None, raw_ai_output=None, raw_ocr_output=None):
     return {
         "items": [],
         "discounts": [],
+        "deposits": [],
         "receipt_total": None,
         "scan_path": scan_path,
         "raw_ai_output": raw_ai_output,
@@ -189,6 +191,14 @@ def _to_float(value):
     return float(match.group(0).replace(",", "."))
 
 
+def _to_last_float(value):
+    matches = re.findall(r"-?\d+[.,]\d{2}", str(value or ""))
+    if not matches:
+        return None
+
+    return float(matches[-1].replace(",", "."))
+
+
 def _parse_ai_json(result, scan_path):
     raw_result = result
     result = re.sub(r"```json", "", result)
@@ -204,6 +214,7 @@ def _parse_ai_json(result, scan_path):
             parsed["raw_ai_output"] = raw_result
             parsed.setdefault("items", [])
             parsed.setdefault("discounts", [])
+            parsed.setdefault("deposits", [])
             parsed.setdefault("receipt_total", None)
             return parsed
 
@@ -211,6 +222,7 @@ def _parse_ai_json(result, scan_path):
             return {
                 "items": json.loads(list_match.group(0)),
                 "discounts": [],
+                "deposits": [],
                 "receipt_total": None,
                 "scan_path": scan_path,
                 "raw_ai_output": raw_result,
@@ -414,6 +426,7 @@ def ocr_parse_receipt(image_path):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     items = []
     discounts = []
+    deposits = []
     receipt_total = None
     pending_discount_name = None
 
@@ -425,7 +438,6 @@ def ocr_parse_receipt(image_path):
         "kortel",
         "mokėta",
         "moketa",
-        "depozit",
         "taros",
         "barkod",
         "sutaup",
@@ -433,6 +445,8 @@ def ocr_parse_receipt(image_path):
     ]
     total_words = ["kvito suma", "mokėtina suma", "moketina suma", "iš viso", "is viso"]
     discount_words = ["nuolaid", "suteiktos naudos", "ačiū", "aciu"]
+
+    deposit_words = ["depozit", "pet", "skardin"]
 
     for line in lines:
         low = line.lower()
@@ -445,6 +459,12 @@ def ocr_parse_receipt(image_path):
 
         if any(word in low for word in total_words):
             receipt_total = abs(value)
+            continue
+
+        if any(word in low for word in deposit_words):
+            deposit_value = _to_last_float(line)
+            if deposit_value and deposit_value > 0:
+                deposits.append({"name": line, "amount": deposit_value})
             continue
 
         if pending_discount_name and value < 0:
@@ -472,6 +492,7 @@ def ocr_parse_receipt(image_path):
     return {
         "items": items,
         "discounts": discounts,
+        "deposits": deposits,
         "receipt_total": receipt_total,
         "scan_path": scan_path,
         "raw_ocr_output": text,

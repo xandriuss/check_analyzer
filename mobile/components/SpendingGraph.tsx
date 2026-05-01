@@ -10,6 +10,7 @@ type ChartPoint = {
   label: string;
   junk: number;
   useful: number;
+  deposit: number;
 };
 
 export function SpendingGraph() {
@@ -28,8 +29,9 @@ export function SpendingGraph() {
         (sum, point) => ({
           junk: sum.junk + point.junk,
           useful: sum.useful + point.useful,
+          deposit: sum.deposit + point.deposit,
         }),
-        { junk: 0, useful: 0 },
+        { junk: 0, useful: 0, deposit: 0 },
       ),
     [chartPoints],
   );
@@ -69,13 +71,17 @@ export function SpendingGraph() {
       </View>
 
       <View style={[styles.summaryGrid, dark && styles.darkPanel]}>
-        <View>
+        <View style={styles.summaryMetric}>
           <Text style={[styles.label, dark && styles.darkMuted]}>{t("junkFood")}</Text>
           <Text style={styles.junk}>{totals.junk.toFixed(2)} EUR</Text>
         </View>
-        <View>
+        <View style={styles.summaryMetric}>
           <Text style={[styles.label, dark && styles.darkMuted]}>{t("usefulFood")}</Text>
           <Text style={styles.useful}>{totals.useful.toFixed(2)} EUR</Text>
+        </View>
+        <View style={styles.summaryMetric}>
+          <Text style={[styles.label, dark && styles.darkMuted]}>{t("depositNeutral")}</Text>
+          <Text style={styles.deposit}>{totals.deposit.toFixed(2)} EUR</Text>
         </View>
       </View>
 
@@ -134,6 +140,7 @@ function buildDayBuckets(receipts: Receipt[], now: Date, maxDays: number): Chart
       label: dayCount <= 10 ? date.toLocaleDateString(undefined, { weekday: "short" }) : String(date.getDate()),
       junk: 0,
       useful: 0,
+      deposit: 0,
     };
   });
   const bucketMap = new Map(buckets.map((bucket) => [bucket.key, bucket]));
@@ -161,6 +168,7 @@ function buildMonthBuckets(receipts: Receipt[], now: Date): ChartPoint[] {
       label: date.toLocaleDateString(undefined, { month: "short" }),
       junk: 0,
       useful: 0,
+      deposit: 0,
     };
   });
   const bucketMap = new Map(buckets.map((bucket) => [bucket.key, bucket]));
@@ -177,8 +185,10 @@ function buildMonthBuckets(receipts: Receipt[], now: Date): ChartPoint[] {
 
 function addReceiptToBucket(bucket: ChartPoint, receipt: Receipt) {
   const junk = Math.max(receipt.junk_total, 0);
+  const deposit = Math.max(receipt.deposit_total ?? 0, 0);
   bucket.junk += junk;
-  bucket.useful += Math.max(receipt.total - junk, 0);
+  bucket.deposit += deposit;
+  bucket.useful += Math.max(receipt.useful_total ?? receipt.total - junk - deposit, 0);
 }
 
 function getReceiptDate(receipt: Receipt) {
@@ -369,13 +379,17 @@ const styles = StyleSheet.create({
   },
   summaryGrid: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    flexWrap: "wrap",
     gap: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e1dbcf",
     padding: 14,
     backgroundColor: "#ffffff",
+  },
+  summaryMetric: {
+    minWidth: 116,
+    flexGrow: 1,
   },
   label: {
     color: "#657174",
@@ -389,6 +403,11 @@ const styles = StyleSheet.create({
   },
   useful: {
     color: "#1e6d66",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  deposit: {
+    color: "#657174",
     fontSize: 22,
     fontWeight: "900",
   },

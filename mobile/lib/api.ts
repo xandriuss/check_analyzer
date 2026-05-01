@@ -27,6 +27,8 @@ export type Receipt = {
   date?: string;
   total: number;
   junk_total: number;
+  deposit_total?: number;
+  useful_total?: number;
   waste_percent?: number;
   photo_url?: string | null;
   scan_url?: string | null;
@@ -40,9 +42,13 @@ export type SubscriptionSummary = {
   locked: boolean;
   total: number;
   junk_total: number;
+  deposit_total?: number;
+  useful_total?: number;
   waste_percent: number;
   monthly_total?: number;
   monthly_junk_total?: number;
+  monthly_deposit_total?: number;
+  monthly_useful_total?: number;
   monthly_waste_percent?: number;
 };
 

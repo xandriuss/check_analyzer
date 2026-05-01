@@ -17,6 +17,14 @@ import { useI18n } from "@/lib/i18n";
 
 type DataView = "receipts" | "graphs";
 
+function receiptDepositTotal(receipt: Receipt) {
+  return Math.max(receipt.deposit_total ?? 0, 0);
+}
+
+function receiptUsefulTotal(receipt: Receipt) {
+  return Math.max(receipt.useful_total ?? receipt.total - receipt.junk_total - receiptDepositTotal(receipt), 0);
+}
+
 export default function HistoryScreen() {
   const { token, user } = useAuth();
   const { t } = useI18n();
@@ -32,8 +40,10 @@ export default function HistoryScreen() {
         (sum, receipt) => ({
           spent: sum.spent + receipt.total,
           junk: sum.junk + receipt.junk_total,
+          deposit: sum.deposit + receiptDepositTotal(receipt),
+          useful: sum.useful + receiptUsefulTotal(receipt),
         }),
-        { spent: 0, junk: 0 },
+        { spent: 0, junk: 0, deposit: 0, useful: 0 },
       ),
     [receipts],
   );
@@ -111,6 +121,12 @@ export default function HistoryScreen() {
                 {t("monthlyJunk")}: {(summary.monthly_junk_total ?? 0).toFixed(2)} EUR
               </Text>
               <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
+                {t("monthlyDeposit")}: {(summary.monthly_deposit_total ?? 0).toFixed(2)} EUR
+              </Text>
+              <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
+                {t("monthlyUseful")}: {(summary.monthly_useful_total ?? 0).toFixed(2)} EUR
+              </Text>
+              <Text style={[styles.value, user?.dark_mode && styles.darkText]}>
                 {t("monthlyWasteShare")}: {(summary.monthly_waste_percent ?? 0).toFixed(1)}%
               </Text>
             </>
@@ -121,13 +137,21 @@ export default function HistoryScreen() {
       {view === "receipts" ? (
         <>
           <View style={styles.summary}>
-            <View>
+            <View style={styles.summaryMetric}>
               <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("totalSpent")}</Text>
               <Text style={styles.total}>{totals.spent.toFixed(2)} EUR</Text>
             </View>
-            <View>
+            <View style={styles.summaryMetric}>
               <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("junkWaste")}</Text>
               <Text style={styles.junk}>{totals.junk.toFixed(2)} EUR</Text>
+            </View>
+            <View style={styles.summaryMetric}>
+              <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("depositNeutral")}</Text>
+              <Text style={styles.deposit}>{totals.deposit.toFixed(2)} EUR</Text>
+            </View>
+            <View style={styles.summaryMetric}>
+              <Text style={[styles.label, user?.dark_mode && styles.darkMuted]}>{t("usefulSpending")}</Text>
+              <Text style={styles.useful}>{totals.useful.toFixed(2)} EUR</Text>
             </View>
           </View>
 
@@ -151,6 +175,11 @@ export default function HistoryScreen() {
                   {item.junk_total.toFixed(2)} EUR {t("junkFood").toLowerCase()}
                   {user?.is_subscriber ? ` - ${(item.waste_percent ?? 0).toFixed(1)}%` : ""}
                 </Text>
+                {receiptDepositTotal(item) > 0 && (
+                  <Text style={[styles.receiptDeposit, user?.dark_mode && styles.darkMuted]}>
+                    {receiptDepositTotal(item).toFixed(2)} EUR {t("depositNeutral").toLowerCase()}
+                  </Text>
+                )}
                 {item.items.map((product) => (
                   <View key={`${item.id}-${product.name}-${product.price}`} style={styles.itemRow}>
                     <Text style={[styles.itemName, user?.dark_mode && styles.darkMuted, product.is_junk && styles.itemJunk]}>
@@ -230,13 +259,17 @@ const styles = StyleSheet.create({
   },
   summary: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    flexWrap: "wrap",
     gap: 12,
     marginHorizontal: 20,
     paddingVertical: 18,
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: "#ded8cc",
+  },
+  summaryMetric: {
+    width: "47%",
+    minWidth: 132,
   },
   proPanel: {
     gap: 6,
@@ -261,6 +294,16 @@ const styles = StyleSheet.create({
   junk: {
     color: "#b3261e",
     fontSize: 26,
+    fontWeight: "900",
+  },
+  deposit: {
+    color: "#657174",
+    fontSize: 24,
+    fontWeight: "900",
+  },
+  useful: {
+    color: "#1e6d66",
+    fontSize: 24,
     fontWeight: "900",
   },
   loader: {
@@ -306,6 +349,10 @@ const styles = StyleSheet.create({
   },
   receiptJunk: {
     color: "#b3261e",
+    fontWeight: "800",
+  },
+  receiptDeposit: {
+    color: "#657174",
     fontWeight: "800",
   },
   itemRow: {

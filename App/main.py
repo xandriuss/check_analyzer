@@ -345,6 +345,7 @@ def normalize_scan_data(data):
         return {
             "items": data,
             "discounts": [],
+            "deposits": [],
             "receipt_total": None,
             "scan_path": None,
             "raw_ai_output": None,
@@ -355,6 +356,7 @@ def normalize_scan_data(data):
         return {
             "items": [],
             "discounts": [],
+            "deposits": [],
             "receipt_total": None,
             "scan_path": None,
             "raw_ai_output": None,
@@ -363,6 +365,7 @@ def normalize_scan_data(data):
 
     data.setdefault("items", [])
     data.setdefault("discounts", [])
+    data.setdefault("deposits", [])
     data.setdefault("receipt_total", None)
     data.setdefault("scan_path", None)
     data.setdefault("raw_ai_output", None)
@@ -386,6 +389,22 @@ def parse_pairs(items):
     return fix_quantity_errors(pairs)
 
 
+def parse_deposits(deposit_items):
+    deposits = []
+
+    for item in deposit_items:
+        try:
+            name = str(item.get("name", "Depozitas")).strip() or "Depozitas"
+            amount = float(item.get("amount", item.get("final_price", 0)))
+        except (TypeError, ValueError):
+            continue
+
+        if name and amount > 0:
+            deposits.append((name, f"{amount:.2f}"))
+
+    return deposits
+
+
 def parse_discounts(discount_items):
     discounts = []
 
@@ -407,6 +426,74 @@ def parse_discounts(discount_items):
 def normalize_match_text(value):
     normalized = unicodedata.normalize("NFKD", str(value or ""))
     return "".join(char for char in normalized if not unicodedata.combining(char)).lower()
+
+
+def is_deposit_item(name):
+    low = normalize_match_text(name)
+    return (
+        "depozit" in low
+        or "depozitas/imoka" in low
+        or "depozitas imoka" in low
+        or "skardin" in low
+        or bool(re.search(r"\bpet\b", low))
+    )
+
+
+def is_deposit_summary_item(name):
+    low = normalize_match_text(name)
+    return (
+        "depozitas/imoka" in low
+        or "depozitas imoka" in low
+        or (low.strip().startswith("depozit") and "pet" not in low and "skardin" not in low)
+    )
+
+
+def collapse_deposit_pairs(pairs):
+    deposit_indexes = [index for index, (name, _) in enumerate(pairs) if is_deposit_item(name)]
+    summary_indexes = [index for index in deposit_indexes if is_deposit_summary_item(pairs[index][0])]
+    if not summary_indexes:
+        return pairs
+
+    summary_index = max(summary_indexes, key=lambda index: float(pairs[index][1]))
+    summary_value = round(float(pairs[summary_index][1]), 2)
+    item_deposit_total = round(
+        sum(float(pairs[index][1]) for index in deposit_indexes if index != summary_index),
+        2,
+    )
+
+    if item_deposit_total > 0 and abs(item_deposit_total - summary_value) <= 0.05:
+        return [pair for index, pair in enumerate(pairs) if index != summary_index]
+
+    return [
+        pair
+        for index, pair in enumerate(pairs)
+        if index == summary_index or not is_deposit_item(pair[0])
+    ]
+
+
+def merge_deposit_pairs(pairs, deposit_pairs):
+    merged = []
+    seen = set()
+
+    for name, price in [*pairs, *deposit_pairs]:
+        key = (normalize_match_text(name), round(float(price), 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append((name, price))
+
+    return collapse_deposit_pairs(fix_quantity_errors(merged))
+
+
+def extract_deposit_pairs(pairs):
+    return [(name, price) for name, price in pairs if is_deposit_item(name)]
+
+
+def deposit_total_from_pairs(pairs):
+    return round(
+        sum(float(price) for name, price in collapse_deposit_pairs(pairs) if is_deposit_item(name)),
+        2,
+    )
 
 
 def is_generic_discount_name(name):
@@ -563,6 +650,17 @@ def scan_total_matches_receipt(pairs, discounts, receipt_total):
     return abs(delta) <= tolerance or is_likely_missing_deposit_delta(delta)
 
 
+def scan_needs_ocr_support(pairs, discounts, receipt_total):
+    if receipt_total is None:
+        return True
+
+    delta = scan_total_delta(pairs, discounts, receipt_total)
+    if not scan_total_matches_receipt(pairs, discounts, receipt_total):
+        return True
+
+    return bool(is_likely_missing_deposit_delta(delta) and not extract_deposit_pairs(pairs))
+
+
 def item_price_is_reasonable(ai_price, ocr_price):
     if ocr_price <= 0:
         return False
@@ -628,6 +726,10 @@ def merge_ocr_item_prices(pairs, discounts, receipt_total, ocr_pairs):
     return fix_quantity_errors(merged)
 
 
+def merge_missing_deposit_pairs(pairs, ocr_pairs):
+    return merge_deposit_pairs(pairs, extract_deposit_pairs(ocr_pairs))
+
+
 def has_repeated_price_hallucination(pairs):
     if len(pairs) < 5:
         return False
@@ -657,10 +759,11 @@ def scan_result_is_plausible(pairs, discounts, receipt_total):
     return True
 
 
-def waste_percent(total, junk_total):
-    if not total:
+def waste_percent(total, junk_total, neutral_total=0):
+    spending_total = max(float(total or 0) - float(neutral_total or 0), 0)
+    if not spending_total:
         return 0
-    return round((junk_total / total) * 100, 1)
+    return round((junk_total / spending_total) * 100, 1)
 
 
 def receipt_junk_total_from_items(receipt: Receipt):
@@ -675,6 +778,22 @@ def receipt_junk_total_from_items(receipt: Receipt):
     if receipt.total and receipt.total > 0:
         junk_total = min(junk_total, float(receipt.total))
     return round(junk_total, 2)
+
+
+def receipt_deposit_total_from_items(receipt: Receipt):
+    if not receipt.items:
+        return 0
+
+    deposit_pairs = [
+        (item.name, f"{float(item.price or 0):.2f}")
+        for item in receipt.items
+        if item.price and item.price > 0 and is_deposit_item(item.name)
+    ]
+    return deposit_total_from_pairs(deposit_pairs)
+
+
+def useful_total(total, junk_total, deposit_total):
+    return round(max(float(total or 0) - float(junk_total or 0) - float(deposit_total or 0), 0), 2)
 
 
 def weekly_scan_count(user: User, db: Session):
@@ -870,13 +989,19 @@ async def upload(
                 ocr_output = ocr_data.get("raw_ocr_output")
             return ocr_data
 
-        pairs = parse_pairs(data.get("items", []))
+        pairs = merge_deposit_pairs(
+            parse_pairs(data.get("items", [])),
+            parse_deposits(data.get("deposits", [])),
+        )
         discounts = remove_duplicate_discounts(parse_discounts(data.get("discounts", [])))
         receipt_total = parse_receipt_total(data.get("receipt_total"))
 
         if not scan_result_is_plausible(pairs, discounts, receipt_total):
             fallback_data = get_ocr_data()
-            ocr_pairs = parse_pairs(fallback_data.get("items", []))
+            ocr_pairs = merge_deposit_pairs(
+                parse_pairs(fallback_data.get("items", [])),
+                parse_deposits(fallback_data.get("deposits", [])),
+            )
             ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
 
@@ -890,9 +1015,12 @@ async def upload(
                     status_code=422,
                     detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
                 )
-        elif receipt_total is None or not scan_total_matches_receipt(pairs, discounts, receipt_total):
+        elif scan_needs_ocr_support(pairs, discounts, receipt_total):
             fallback_data = get_ocr_data()
-            ocr_pairs = parse_pairs(fallback_data.get("items", []))
+            ocr_pairs = merge_deposit_pairs(
+                parse_pairs(fallback_data.get("items", [])),
+                parse_deposits(fallback_data.get("deposits", [])),
+            )
             ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
 
@@ -901,6 +1029,7 @@ async def upload(
             if receipt_total is None:
                 receipt_total = ocr_receipt_total
 
+            pairs = merge_missing_deposit_pairs(pairs, ocr_pairs)
             pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, ocr_pairs)
 
         discounts = remove_duplicate_discounts(discounts)
@@ -909,7 +1038,7 @@ async def upload(
         filtered_pairs_for_junk = [
             (name, price)
             for name, price in pairs
-            if not is_excluded_junk(name, exclusions)
+            if not is_deposit_item(name) and not is_excluded_junk(name, exclusions)
         ]
         junk_items, junk_total = analyze_junk(filtered_pairs_for_junk)
         junk_lookup = set(junk_items)
@@ -932,6 +1061,8 @@ async def upload(
         calculated_total = calculated_scan_total(pairs, discounts)
         total = receipt_total if receipt_total and receipt_total > 0 else calculated_total
         junk_total = min(junk_total, total)
+        deposit_total = deposit_total_from_pairs(pairs)
+        useful_spending_total = useful_total(total, junk_total, deposit_total)
         scan_path = data.get("scan_path")
         if not scan_path and ocr_data:
             scan_path = ocr_data.get("scan_path")
@@ -983,7 +1114,9 @@ async def upload(
             "id": receipt.id,
             "total": total,
             "junk_total": junk_total,
-            "waste_percent": waste_percent(total, junk_total),
+            "deposit_total": deposit_total,
+            "useful_total": useful_spending_total,
+            "waste_percent": waste_percent(total, junk_total, deposit_total),
             "photo_url": f"/uploads/{filename}",
             "scan_url": f"/{scan_relative_path}" if scan_relative_path else None,
             "ai_output": ai_output,
@@ -1016,12 +1149,16 @@ async def upload(
 
 def serialize_receipt(receipt: Receipt):
     computed_junk_total = receipt_junk_total_from_items(receipt)
+    computed_deposit_total = receipt_deposit_total_from_items(receipt)
+    computed_useful_total = useful_total(receipt.total, computed_junk_total, computed_deposit_total)
     return {
         "id": receipt.id,
         "date": receipt.created_at,
         "total": receipt.total,
         "junk_total": computed_junk_total,
-        "waste_percent": waste_percent(receipt.total, computed_junk_total),
+        "deposit_total": computed_deposit_total,
+        "useful_total": computed_useful_total,
+        "waste_percent": waste_percent(receipt.total, computed_junk_total, computed_deposit_total),
         "photo_url": f"/{receipt.photo_path}" if receipt.photo_path else None,
         "scan_url": f"/{receipt.scan_path}" if receipt.scan_path else None,
         "ai_output": receipt.ai_output,
@@ -1057,13 +1194,17 @@ def subscription_summary(user: User = Depends(get_current_user), db: Session = D
     receipts = db.query(Receipt).filter(Receipt.user_id == user.id).all()
     total = round(sum(receipt.total or 0 for receipt in receipts), 2)
     junk_total = round(sum(receipt_junk_total_from_items(receipt) for receipt in receipts), 2)
-    total_waste_percent = waste_percent(total, junk_total)
+    deposit_total = round(sum(receipt_deposit_total_from_items(receipt) for receipt in receipts), 2)
+    useful_spending_total = useful_total(total, junk_total, deposit_total)
+    total_waste_percent = waste_percent(total, junk_total, deposit_total)
 
     if not user.is_subscriber:
         return {
             "locked": True,
             "total": total,
             "junk_total": junk_total,
+            "deposit_total": deposit_total,
+            "useful_total": useful_spending_total,
             "waste_percent": total_waste_percent,
         }
 
@@ -1071,15 +1212,21 @@ def subscription_summary(user: User = Depends(get_current_user), db: Session = D
     monthly_receipts = [receipt for receipt in receipts if receipt.created_at and receipt.created_at >= since]
     monthly_total = round(sum(receipt.total or 0 for receipt in monthly_receipts), 2)
     monthly_junk = round(sum(receipt_junk_total_from_items(receipt) for receipt in monthly_receipts), 2)
+    monthly_deposit = round(sum(receipt_deposit_total_from_items(receipt) for receipt in monthly_receipts), 2)
+    monthly_useful = useful_total(monthly_total, monthly_junk, monthly_deposit)
 
     return {
         "locked": False,
         "total": total,
         "junk_total": junk_total,
+        "deposit_total": deposit_total,
+        "useful_total": useful_spending_total,
         "waste_percent": total_waste_percent,
         "monthly_total": monthly_total,
         "monthly_junk_total": monthly_junk,
-        "monthly_waste_percent": waste_percent(monthly_total, monthly_junk),
+        "monthly_deposit_total": monthly_deposit,
+        "monthly_useful_total": monthly_useful,
+        "monthly_waste_percent": waste_percent(monthly_total, monthly_junk, monthly_deposit),
     }
 
 
