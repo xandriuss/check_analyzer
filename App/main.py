@@ -1025,25 +1025,8 @@ async def upload(
             else:
                 raise HTTPException(
                     status_code=422,
-                    detail="Receipt totals did not look reliable. Try a clearer photo inside the guide.",
+                    detail="Receipt totals did not look reliable. Try a clearer, closer photo.",
                 )
-        elif scan_needs_ocr_support(pairs, discounts, receipt_total):
-            fallback_data = get_ocr_data()
-            ocr_pairs = merge_deposit_pairs(
-                parse_pairs(fallback_data.get("items", [])),
-                parse_deposits(fallback_data.get("deposits", [])),
-            )
-            ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
-            ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
-            ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, ocr_receipt_total)
-
-            if not discounts:
-                discounts = ocr_discounts
-            if receipt_total is None:
-                receipt_total = ocr_receipt_total
-
-            pairs = merge_missing_deposit_pairs(pairs, ocr_pairs)
-            pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, ocr_pairs)
 
         discounts = remove_duplicate_discounts(discounts)
 

@@ -11,10 +11,11 @@ import numpy as np
 import pytesseract
 from openai import OpenAI
 
-PREPARED_MAX_LONG_EDGE = 1600
-PREPARED_JPEG_QUALITY = 76
+PREPARED_MAX_LONG_EDGE = 1150
+PREPARED_JPEG_QUALITY = 62
 OCR_TARGET_WIDTH = 1500
-OCR_TIMEOUT_SECONDS = 8
+OCR_TIMEOUT_SECONDS = 4
+OCR_ORIENTATION_TIMEOUT_SECONDS = 1.5
 
 try:
     from dotenv import load_dotenv
@@ -214,6 +215,65 @@ def _auto_crop_receipt(img):
     return best_crop
 
 
+def _orientation_score(text):
+    normalized = _normalize_text(text)
+    price_count = len(re.findall(r"-?\d+[,.]\d{2}", text or ""))
+    keyword_score = 0
+    for word in [
+        "maxima",
+        "kvito suma",
+        "moketina suma",
+        "pvm",
+        "kasinink",
+        "nuolaid",
+        "depozit",
+        "aciu",
+        "eur",
+    ]:
+        if word in normalized:
+            keyword_score += 12
+    return keyword_score + min(price_count, 30) * 3
+
+
+def _resize_for_orientation(gray):
+    height, width = gray.shape[:2]
+    long_edge = max(height, width)
+    if long_edge <= 850:
+        return gray
+    scale = 850 / long_edge
+    return cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+
+def _orient_receipt_upright(img):
+    if img is None or img.size == 0:
+        return img
+
+    best_img = img
+    best_score = -1
+
+    for degrees in (0, 180):
+        rotated = _rotate_image(img, degrees)
+        gray = cv2.cvtColor(rotated, cv2.COLOR_BGR2GRAY)
+        gray = _resize_for_orientation(gray)
+        try:
+            text = pytesseract.image_to_string(
+                gray,
+                lang="lit+eng",
+                config="--oem 3 --psm 6",
+                timeout=OCR_ORIENTATION_TIMEOUT_SECONDS,
+            )
+        except (RuntimeError, pytesseract.TesseractNotFoundError, pytesseract.TesseractError):
+            return img
+
+        score = _orientation_score(text)
+        if score > best_score:
+            best_score = score
+            best_img = rotated
+
+    print(f"Receipt orientation score={best_score:.1f}")
+    return best_img
+
+
 def prepare_receipt_image(image_path):
     if not os.path.exists(image_path):
         print("Image not found:", image_path)
@@ -228,7 +288,7 @@ def prepare_receipt_image(image_path):
     if img is None:
         return image_path
 
-    cropped = _auto_crop_receipt(img)
+    cropped = _orient_receipt_upright(_auto_crop_receipt(img))
 
     long_edge = max(cropped.shape[:2])
     scale = min(1.0, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))
@@ -331,7 +391,7 @@ def ai_parse_receipt(image_path):
 
     response = client.responses.create(
         model="gpt-4.1-mini",
-        max_output_tokens=1800,
+        max_output_tokens=1200,
         input=[
             {
                 "role": "user",
@@ -340,6 +400,7 @@ def ai_parse_receipt(image_path):
                     {
                         "type": "input_image",
                         "image_url": f"data:image/jpeg;base64,{img_base64}",
+                        "detail": "low",
                     },
                 ],
             }
@@ -425,19 +486,8 @@ def _ocr_variants(img):
     gray = _deskew(_resize_for_ocr(gray))
     denoised = cv2.bilateralFilter(gray, 7, 35, 35)
     sharpened = cv2.addWeighted(denoised, 1.6, cv2.GaussianBlur(denoised, (0, 0), 1.2), -0.6, 0)
-    _, otsu = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    adaptive = cv2.adaptiveThreshold(
-        denoised,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31,
-        9,
-    )
     return [
         ("sharpened", sharpened),
-        ("otsu", otsu),
-        ("adaptive", adaptive),
     ]
 
 
@@ -464,7 +514,6 @@ def _ocr_confidence(image, config):
 def _read_ocr_text(img):
     configs = [
         "--oem 3 --psm 6 -c preserve_interword_spaces=1",
-        "--oem 3 --psm 4 -c preserve_interword_spaces=1",
     ]
     best = {"text": "", "score": -1, "variant": "", "confidence": 0}
     start = time.perf_counter()
