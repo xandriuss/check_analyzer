@@ -11,8 +11,8 @@ import numpy as np
 import pytesseract
 from openai import OpenAI
 
-PREPARED_MAX_LONG_EDGE = 1150
-PREPARED_JPEG_QUALITY = 62
+PREPARED_MAX_LONG_EDGE = 1450
+PREPARED_JPEG_QUALITY = 74
 OCR_TARGET_WIDTH = 1500
 OCR_TIMEOUT_SECONDS = 4
 OCR_ORIENTATION_TIMEOUT_SECONDS = 1.5
@@ -400,7 +400,7 @@ def ai_parse_receipt(image_path):
                     {
                         "type": "input_image",
                         "image_url": f"data:image/jpeg;base64,{img_base64}",
-                        "detail": "low",
+                        "detail": "auto",
                     },
                 ],
             }

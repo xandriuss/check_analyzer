@@ -666,11 +666,11 @@ def scan_needs_ocr_support(pairs, discounts, receipt_total):
 
 def add_inferred_deposit_pair(pairs, discounts, receipt_total):
     delta = scan_total_delta(pairs, discounts, receipt_total)
-    if not is_likely_missing_deposit_delta(delta) or extract_deposit_pairs(pairs):
+    if not is_likely_missing_deposit_delta(delta):
         return pairs
 
     deposit_value = abs(delta)
-    return merge_deposit_pairs(pairs, [("Depozitas", f"{deposit_value:.2f}")])
+    return merge_deposit_pairs(pairs, [(f"PET/skardinė depozitas {deposit_value:.2f} EUR", f"{deposit_value:.2f}")])
 
 
 def item_price_is_reasonable(ai_price, ocr_price):
@@ -766,6 +766,8 @@ def scan_result_is_plausible(pairs, discounts, receipt_total):
         if calculated > receipt_total * 2.2 and calculated - receipt_total > 12:
             return False
         if calculated < receipt_total * 0.25 and receipt_total - calculated > 12:
+            return False
+        if not scan_total_matches_receipt(pairs, discounts, receipt_total):
             return False
 
     return True
@@ -1009,6 +1011,19 @@ async def upload(
         receipt_total = parse_receipt_total(data.get("receipt_total"))
         pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
 
+        if scan_needs_ocr_support(pairs, discounts, receipt_total):
+            support_data = get_ocr_data()
+            support_pairs = merge_deposit_pairs(
+                parse_pairs(support_data.get("items", [])),
+                parse_deposits(support_data.get("deposits", [])),
+            )
+            support_discounts = remove_duplicate_discounts(parse_discounts(support_data.get("discounts", [])))
+
+            pairs = merge_missing_deposit_pairs(pairs, support_pairs)
+            discounts = merge_specific_ocr_discounts(discounts, support_discounts)
+            pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, support_pairs)
+            pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
+
         if not scan_result_is_plausible(pairs, discounts, receipt_total):
             fallback_data = get_ocr_data()
             ocr_pairs = merge_deposit_pairs(
@@ -1017,13 +1032,14 @@ async def upload(
             )
             ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
             ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
-            ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, ocr_receipt_total)
+            effective_ocr_total = ocr_receipt_total or receipt_total
+            ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, effective_ocr_total)
 
-            if scan_result_is_plausible(ocr_pairs, ocr_discounts, ocr_receipt_total):
+            if scan_result_is_plausible(ocr_pairs, ocr_discounts, effective_ocr_total):
                 data = fallback_data
                 pairs = ocr_pairs
                 discounts = ocr_discounts
-                receipt_total = ocr_receipt_total
+                receipt_total = effective_ocr_total
             else:
                 raise HTTPException(
                     status_code=422,
