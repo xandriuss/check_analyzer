@@ -400,6 +400,9 @@ def parse_deposits(deposit_items):
         except (TypeError, ValueError):
             continue
 
+        if not is_deposit_item(name):
+            continue
+
         if name and amount > 0:
             deposits.append((name, f"{amount:.2f}"))
 
@@ -431,12 +434,13 @@ def normalize_match_text(value):
 
 def is_deposit_item(name):
     low = normalize_match_text(name)
+    compact = re.sub(r"\s+", "", low)
     return (
         "depozit" in low
-        or "depozitas/imoka" in low
-        or "depozitas imoka" in low
-        or "skardin" in low
-        or bool(re.search(r"\bpet\b", low))
+        or "depozitas/imoka" in compact
+        or "depozitasimoka" in compact
+        or ("skardin" in low and ("0,10" in low or "0.10" in low or "depozit" in low))
+        or bool(re.search(r"\bpet\b", low) and ("0,10" in low or "0.10" in low or "depozit" in low))
     )
 
 
