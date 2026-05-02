@@ -455,16 +455,14 @@ def collapse_deposit_pairs(pairs):
     if not summary_indexes:
         return pairs
 
+    summary_index_set = set(summary_indexes)
+    item_indexes = [index for index in deposit_indexes if index not in summary_index_set]
+    item_deposit_total = round(sum(float(pairs[index][1]) for index in item_indexes), 2)
+
+    if item_deposit_total > 0:
+        return [pair for index, pair in enumerate(pairs) if index not in summary_index_set]
+
     summary_index = max(summary_indexes, key=lambda index: float(pairs[index][1]))
-    summary_value = round(float(pairs[summary_index][1]), 2)
-    item_deposit_total = round(
-        sum(float(pairs[index][1]) for index in deposit_indexes if index != summary_index),
-        2,
-    )
-
-    if item_deposit_total > 0 and abs(item_deposit_total - summary_value) <= 0.05:
-        return [pair for index, pair in enumerate(pairs) if index != summary_index]
-
     return [
         pair
         for index, pair in enumerate(pairs)
