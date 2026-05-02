@@ -41,6 +41,9 @@ junk_brands = {
         "Rūta",
         "Nidar",
         "Karūna",
+        "OHO",
+        "Oho",
+        "OHO!",
     ],
     "gėrimai": [
         "Coca Cola",
@@ -85,6 +88,9 @@ junk_words = [
     "krekeriai",
     "trapučiai",
     "trapuciai",
+    "javainiai",
+    "javainis",
+    "javainiu",
 
     # Saldumynai
     "šokoladas",
