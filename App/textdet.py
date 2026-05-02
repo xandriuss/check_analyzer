@@ -99,51 +99,6 @@ def _rotate_image(img, degrees):
     return img
 
 
-def _order_points(points):
-    rect = np.zeros((4, 2), dtype="float32")
-    sums = points.sum(axis=1)
-    diffs = np.diff(points, axis=1)
-
-    rect[0] = points[np.argmin(sums)]
-    rect[2] = points[np.argmax(sums)]
-    rect[1] = points[np.argmin(diffs)]
-    rect[3] = points[np.argmax(diffs)]
-    return rect
-
-
-def _warp_receipt(image, points):
-    rect = _order_points(points.astype("float32"))
-    top_left, top_right, bottom_right, bottom_left = rect
-
-    width_a = np.linalg.norm(bottom_right - bottom_left)
-    width_b = np.linalg.norm(top_right - top_left)
-    max_width = int(max(width_a, width_b))
-
-    height_a = np.linalg.norm(top_right - bottom_right)
-    height_b = np.linalg.norm(top_left - bottom_left)
-    max_height = int(max(height_a, height_b))
-
-    if max_width < 80 or max_height < 120:
-        return None
-
-    destination = np.array(
-        [
-            [0, 0],
-            [max_width - 1, 0],
-            [max_width - 1, max_height - 1],
-            [0, max_height - 1],
-        ],
-        dtype="float32",
-    )
-    matrix = cv2.getPerspectiveTransform(rect, destination)
-    warped = cv2.warpPerspective(image, matrix, (max_width, max_height))
-
-    if warped.shape[1] > warped.shape[0]:
-        warped = cv2.rotate(warped, cv2.ROTATE_90_CLOCKWISE)
-
-    return warped
-
-
 def _receipt_candidate_score(crop, source_width, source_height, x, y, w, h, area):
     crop_height, crop_width = crop.shape[:2]
     if crop_width <= 0 or crop_height <= 0:
@@ -177,32 +132,25 @@ def _receipt_candidate_score(crop, source_width, source_height, x, y, w, h, area
 def _contour_to_crop(image, contour):
     area = cv2.contourArea(contour)
     height, width = image.shape[:2]
-    if area < width * height * 0.035:
+    if area < width * height * 0.06:
         return None
 
     x, y, w, h = cv2.boundingRect(contour)
-    if w < width * 0.10 or h < height * 0.12:
+    if w < width * 0.18 or h < height * 0.28:
         return None
 
-    perimeter = cv2.arcLength(contour, True)
-    approx = cv2.approxPolyDP(contour, 0.025 * perimeter, True)
-    crop = None
+    if h < w * 0.95:
+        return None
 
-    if len(approx) == 4:
-        crop = _warp_receipt(image, approx.reshape(4, 2))
-
-    if crop is None:
-        box = cv2.boxPoints(cv2.minAreaRect(contour))
-        crop = _warp_receipt(image, box)
-
-    if crop is None or crop.size == 0:
-        margin_x = int(w * 0.045)
-        margin_y = int(h * 0.025)
-        x1 = max(x - margin_x, 0)
-        y1 = max(y - margin_y, 0)
-        x2 = min(x + w + margin_x, width)
-        y2 = min(y + h + margin_y, height)
-        crop = image[y1:y2, x1:x2]
+    # Keep rows intact. Perspective warp can distort narrow receipt text when the
+    # detected contour comes from shadows, logos, or partial paper edges.
+    margin_x = max(int(w * 0.08), 24)
+    margin_y = max(int(h * 0.035), 24)
+    x1 = max(x - margin_x, 0)
+    y1 = max(y - margin_y, 0)
+    x2 = min(x + w + margin_x, width)
+    y2 = min(y + h + margin_y, height)
+    crop = image[y1:y2, x1:x2]
 
     score = _receipt_candidate_score(crop, width, height, x, y, w, h, area)
     return crop, score
@@ -233,9 +181,7 @@ def _detect_receipt_crop(img):
     if candidates:
         cropped, score = max(candidates, key=lambda item: item[1])
     else:
-        crop_width = int(width * 0.72)
-        x1 = max((width - crop_width) // 2, 0)
-        cropped = img[:, x1 : x1 + crop_width]
+        cropped = img
         score = width * height * 0.05
 
     if cropped.shape[1] > cropped.shape[0]:
@@ -256,7 +202,16 @@ def _auto_crop_receipt(img):
             best_score = score
 
     print(f"Auto receipt crop score={best_score:.1f}")
-    return best_crop if best_crop is not None else img
+    if best_crop is None:
+        return img
+
+    original_area = img.shape[0] * img.shape[1]
+    crop_area = best_crop.shape[0] * best_crop.shape[1]
+    if crop_area < original_area * 0.18:
+        print("Auto receipt crop rejected: crop too small")
+        return img
+
+    return best_crop
 
 
 def prepare_receipt_image(image_path):
@@ -281,14 +236,13 @@ def prepare_receipt_image(image_path):
         cropped = cv2.resize(cropped, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
     cropped_gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-    cropped_gray = cv2.bilateralFilter(cropped_gray, 7, 45, 45)
-    enhanced = cv2.adaptiveThreshold(
+    cropped_gray = cv2.bilateralFilter(cropped_gray, 5, 35, 35)
+    enhanced = cv2.addWeighted(
         cropped_gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        31,
-        9,
+        1.45,
+        cv2.GaussianBlur(cropped_gray, (0, 0), 1.1),
+        -0.45,
+        0,
     )
 
     cv2.imwrite(str(prepared_path), enhanced, [int(cv2.IMWRITE_JPEG_QUALITY), PREPARED_JPEG_QUALITY])
