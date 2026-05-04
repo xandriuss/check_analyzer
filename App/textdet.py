@@ -302,7 +302,7 @@ def _orient_receipt_upright(img):
     return best_img
 
 
-def prepare_receipt_image(image_path, auto_crop=True):
+def prepare_receipt_image(image_path, auto_crop=True, use_orientation_ocr=True):
     if not os.path.exists(image_path):
         print("Image not found:", image_path)
         return image_path
@@ -317,7 +317,9 @@ def prepare_receipt_image(image_path, auto_crop=True):
     if img is None:
         return image_path
 
-    cropped = _orient_receipt_upright(_auto_crop_receipt(img)) if auto_crop else img
+    cropped = _auto_crop_receipt(img) if auto_crop else img
+    if use_orientation_ocr:
+        cropped = _orient_receipt_upright(cropped)
 
     long_edge = max(cropped.shape[:2])
     scale = min(1.0, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))

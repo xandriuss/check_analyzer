@@ -5,6 +5,7 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Modal,
   Pressable,
   StyleSheet,
@@ -12,7 +13,16 @@ import {
   View,
 } from "react-native";
 
-import { completeRewardedAd, getUsage, Receipt, uploadReceipt, UsageStatus } from "@/lib/api";
+import {
+  API_URL,
+  completeRewardedAd,
+  confirmPreparedScan,
+  getUsage,
+  prepareReceiptScan,
+  PreparedScan,
+  Receipt,
+  UsageStatus,
+} from "@/lib/api";
 import { useAuth } from "@/context/auth";
 
 type CapturedPhoto = {
@@ -34,6 +44,8 @@ export default function CameraScreen() {
   const [usage, setUsage] = useState<UsageStatus | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState("Preparing receipt...");
+  const [pendingScan, setPendingScan] = useState<PreparedScan | null>(null);
   const [torchOn, setTorchOn] = useState(false);
   const [adPlaying, setAdPlaying] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(8);
@@ -75,6 +87,7 @@ export default function CameraScreen() {
 
     setError("");
     setLoading(true);
+    setLoadingLabel("Preparing crop...");
 
     try {
       const picture = await cameraRef.current?.takePictureAsync({
@@ -89,9 +102,8 @@ export default function CameraScreen() {
           height: picture.height,
           exif: picture.exif,
         });
-        const scan = await uploadReceipt(uploadUri, token);
-        setResult(scan);
-        await loadUsage();
+        const prepared = await prepareReceiptScan(uploadUri, token);
+        setPendingScan(prepared);
         setTorchOn(false);
       }
     } catch (err) {
@@ -99,6 +111,30 @@ export default function CameraScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const confirmScan = async () => {
+    if (!token || !pendingScan || loading) return;
+
+    setError("");
+    setLoading(true);
+    setLoadingLabel("Scanning receipt...");
+
+    try {
+      const scan = await confirmPreparedScan(pendingScan.scan_id, token);
+      setResult(scan);
+      setPendingScan(null);
+      await loadUsage();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not scan receipt");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const retakeScan = () => {
+    setPendingScan(null);
+    setError("");
   };
 
   if (!permission?.granted) {
@@ -134,7 +170,7 @@ export default function CameraScreen() {
           {loading && (
             <View style={styles.scanOverlay}>
               <ActivityIndicator color="#ffffff" />
-              <Text style={styles.scanOverlayText}>Scanning receipt...</Text>
+              <Text style={styles.scanOverlayText}>{loadingLabel}</Text>
             </View>
           )}
 
@@ -180,7 +216,67 @@ export default function CameraScreen() {
           </View>
         </View>
       </Modal>
+
+      <ScanReviewModal
+        error={error}
+        loading={loading}
+        onConfirm={confirmScan}
+        onRetake={retakeScan}
+        scan={pendingScan}
+      />
     </View>
+  );
+}
+
+function ScanReviewModal({
+  error,
+  loading,
+  onConfirm,
+  onRetake,
+  scan,
+}: {
+  error: string;
+  loading: boolean;
+  onConfirm: () => void;
+  onRetake: () => void;
+  scan: PreparedScan | null;
+}) {
+  if (!scan) return null;
+
+  const previewUri = `${API_URL}${scan.scan_url}?v=${encodeURIComponent(scan.scan_id)}`;
+
+  return (
+    <Modal animationType="slide" visible>
+      <View style={styles.reviewScreen}>
+        <View style={styles.reviewHeader}>
+          <View>
+            <Text style={styles.reviewEyebrow}>Confirm crop</Text>
+            <Text style={styles.reviewTitle}>Review receipt</Text>
+          </View>
+        </View>
+
+        <View style={styles.reviewImageWrap}>
+          <Image resizeMode="contain" source={{ uri: previewUri }} style={styles.reviewImage} />
+          {loading && (
+            <View style={styles.reviewLoading}>
+              <ActivityIndicator color="#ffffff" />
+              <Text style={styles.reviewLoadingText}>Scanning receipt...</Text>
+            </View>
+          )}
+        </View>
+
+        {!!error && <Text style={styles.reviewError}>{error}</Text>}
+
+        <View style={styles.reviewActions}>
+          <Pressable disabled={loading} onPress={onRetake} style={[styles.secondaryAction, loading && styles.disabled]}>
+            <Text style={styles.secondaryActionText}>Retake</Text>
+          </Pressable>
+          <Pressable disabled={loading} onPress={onConfirm} style={[styles.confirmAction, loading && styles.disabled]}>
+            <Text style={styles.confirmActionText}>Scan</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -489,5 +585,98 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "900",
     textAlign: "center",
+  },
+  reviewScreen: {
+    flex: 1,
+    gap: 14,
+    paddingHorizontal: 18,
+    paddingTop: 52,
+    paddingBottom: 24,
+    backgroundColor: "#101718",
+  },
+  reviewHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  reviewEyebrow: {
+    color: "#e45b2c",
+    fontSize: 13,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  reviewTitle: {
+    color: "#ffffff",
+    fontSize: 30,
+    fontWeight: "900",
+  },
+  reviewImageWrap: {
+    flex: 1,
+    overflow: "hidden",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "#050909",
+  },
+  reviewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  reviewLoading: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: "rgba(0,0,0,0.58)",
+  },
+  reviewLoadingText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  reviewError: {
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: "#fff2ef",
+    color: "#b3261e",
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  reviewActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  secondaryAction: {
+    flex: 1,
+    minHeight: 58,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)",
+    backgroundColor: "#ffffff",
+  },
+  secondaryActionText: {
+    color: "#183f45",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  confirmAction: {
+    flex: 1,
+    minHeight: 58,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: "#e45b2c",
+  },
+  confirmActionText: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "900",
   },
 });

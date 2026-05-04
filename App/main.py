@@ -37,6 +37,7 @@ from database import Base, SessionLocal, engine
 from junkanalyzer import analyze_junk, is_junk
 from models import BugReport, Item, Receipt, User
 from textdet import ai_parse_receipt, fix_quantity_errors, ocr_parse_receipt
+from textdet import prepare_receipt_image
 
 
 class RegisterRequest(BaseModel):
@@ -67,6 +68,10 @@ class ResetDataRequest(BaseModel):
 
 class RevenueCatRefreshRequest(BaseModel):
     app_user_id: str
+
+
+class ConfirmScanRequest(BaseModel):
+    scan_id: str
 
 
 FREE_WEEKLY_LIMIT = 3
@@ -989,6 +994,257 @@ def append_debug_output(current_output, label, next_output):
     return f"{current_output}\n\n=== {label} ===\n{next_output}"
 
 
+def check_scan_allowance(user: User, db: Session):
+    if user.is_subscriber or weekly_scan_count(user, db) < FREE_WEEKLY_LIMIT:
+        return False
+
+    if (user.bonus_scan_credits or 0) <= 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Free weekly scan limit reached. Watch a rewarded ad or subscribe for more weekly operations.",
+        )
+
+    return True
+
+
+def create_upload_filename(original_filename):
+    extension = os.path.splitext(original_filename or "receipt.jpg")[1].lower() or ".jpg"
+    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+        extension = ".jpg"
+    return f"{uuid4().hex}{extension}"
+
+
+def save_upload_file(file: UploadFile):
+    filename = create_upload_filename(file.filename)
+    path = UPLOAD_DIR / filename
+
+    with open(path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    return filename, path
+
+
+def get_pending_scan_path(scan_id):
+    filename = Path(scan_id or "").name
+    if not re.fullmatch(r"[a-f0-9]{32}\.(jpg|jpeg|png|webp)", filename, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="Invalid pending scan id.")
+
+    path = (UPLOAD_DIR / filename).resolve()
+    if path.parent != UPLOAD_DIR.resolve() or not path.exists():
+        raise HTTPException(status_code=404, detail="Pending scan was not found. Retake the photo.")
+
+    return filename, path
+
+
+def process_receipt_file(path: Path, filename: str, user: User, db: Session, using_bonus_credit: bool):
+    data = normalize_scan_data(ai_parse_receipt(str(path)))
+    ocr_data = None
+    ai_output = data.get("raw_ai_output")
+    ocr_output = "OCR skipped: AI result was reliable enough."
+
+    def get_ocr_data():
+        nonlocal ocr_data, ocr_output
+        if ocr_data is None:
+            ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
+            ocr_output = ocr_data.get("raw_ocr_output")
+        return ocr_data
+
+    pairs, discounts, receipt_total = parse_receipt_candidate(data)
+
+    if scan_needs_ocr_support(pairs, discounts, receipt_total):
+        support_data = get_ocr_data()
+        support_pairs, support_discounts, _ = parse_receipt_candidate(support_data)
+
+        pairs = merge_missing_deposit_pairs(pairs, support_pairs)
+        discounts = merge_specific_ocr_discounts(discounts, support_discounts)
+        pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, support_pairs)
+        pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
+
+    if not scan_result_is_plausible(pairs, discounts, receipt_total):
+        full_data = normalize_scan_data(ai_parse_receipt(str(path), auto_crop=False))
+        full_pairs, full_discounts, full_receipt_total = parse_receipt_candidate(full_data)
+        effective_full_total = full_receipt_total or receipt_total
+        full_pairs = add_inferred_deposit_pair(full_pairs, full_discounts, effective_full_total)
+
+        if scan_result_is_plausible(full_pairs, full_discounts, effective_full_total):
+            data = full_data
+            pairs = full_pairs
+            discounts = full_discounts
+            receipt_total = effective_full_total
+            ai_output = append_debug_output(
+                ai_output,
+                "FULL PHOTO FALLBACK AI",
+                full_data.get("raw_ai_output"),
+            )
+
+    if not scan_result_is_plausible(pairs, discounts, receipt_total):
+        fallback_data = get_ocr_data()
+        ocr_pairs, ocr_discounts, ocr_receipt_total = parse_receipt_candidate(fallback_data)
+        effective_ocr_total = ocr_receipt_total or receipt_total
+        ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, effective_ocr_total)
+
+        if scan_result_is_plausible(ocr_pairs, ocr_discounts, effective_ocr_total):
+            data = fallback_data
+            pairs = ocr_pairs
+            discounts = ocr_discounts
+            receipt_total = effective_ocr_total
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail="Receipt totals did not look reliable. Try a clearer, closer photo.",
+            )
+
+    discounts = remove_duplicate_discounts(discounts)
+
+    exclusions = parse_user_exclusions(user)
+    filtered_pairs_for_junk = [
+        (name, price)
+        for name, price in pairs
+        if not is_deposit_item(name) and not is_excluded_junk(name, exclusions)
+    ]
+    junk_items, junk_total = analyze_junk(filtered_pairs_for_junk)
+    junk_lookup = set(junk_items)
+    junk_discount_items = []
+    junk_discount_total = 0.0
+
+    for name, amount in discounts:
+        if is_excluded_junk(name, exclusions):
+            continue
+
+        discount_value = float(amount)
+        if discount_value >= 0:
+            continue
+
+        if discount_targets_junk_item(name, junk_items):
+            junk_discount_total += discount_value
+            junk_discount_items.append((name, f"{discount_value:.2f}"))
+
+    junk_total = round(max(junk_total + junk_discount_total, 0), 2)
+    calculated_total = calculated_scan_total(pairs, discounts)
+    total = receipt_total if receipt_total and receipt_total > 0 else calculated_total
+    junk_total = min(junk_total, total)
+    deposit_total = deposit_total_from_pairs(pairs)
+    useful_spending_total = useful_total(total, junk_total, deposit_total)
+    scan_path = data.get("scan_path")
+    if not scan_path and ocr_data:
+        scan_path = ocr_data.get("scan_path")
+    scan_relative_path = None
+    if scan_path:
+        scan_relative_path = f"uploads/{Path(scan_path).name}"
+
+    receipt = Receipt(
+        user_id=user.id,
+        total=total,
+        junk_total=junk_total,
+        photo_path=f"uploads/{filename}",
+        scan_path=scan_relative_path,
+        ai_output=ai_output,
+        ocr_output=ocr_output,
+    )
+    db.add(receipt)
+    db.flush()
+
+    if using_bonus_credit:
+        user.bonus_scan_credits = max((user.bonus_scan_credits or 0) - 1, 0)
+        db.add(user)
+
+    for name, price in pairs:
+        db.add(
+            Item(
+                receipt_id=receipt.id,
+                name=name,
+                price=float(price),
+                is_junk=1 if (name, price) in junk_lookup else 0,
+            )
+        )
+
+    for name, amount in discounts:
+        discount_is_junk = discount_targets_junk_item(name, junk_items)
+        db.add(
+            Item(
+                receipt_id=receipt.id,
+                name=name,
+                price=float(amount),
+                is_junk=1 if discount_is_junk else 0,
+            )
+        )
+
+    db.commit()
+    db.refresh(receipt)
+
+    return {
+        "id": receipt.id,
+        "total": total,
+        "junk_total": junk_total,
+        "deposit_total": deposit_total,
+        "useful_total": useful_spending_total,
+        "waste_percent": waste_percent(total, junk_total, deposit_total),
+        "photo_url": f"/uploads/{filename}",
+        "scan_url": f"/{scan_relative_path}" if scan_relative_path else None,
+        "ai_output": ai_output,
+        "ocr_output": ocr_output,
+        "discounts": [
+            {
+                "name": name,
+                "amount": float(amount),
+                "is_junk": discount_targets_junk_item(name, junk_items),
+            }
+            for name, amount in discounts
+        ],
+        "items": [
+            {
+                "name": name,
+                "price": float(price),
+                "is_junk": (name, price) in junk_lookup,
+            }
+            for name, price in pairs
+        ],
+    }
+
+
+@app.post("/prepare-scan")
+async def prepare_scan(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        check_scan_allowance(user, db)
+        filename, path = save_upload_file(file)
+        scan_path = prepare_receipt_image(str(path), auto_crop=True, use_orientation_ocr=False)
+        return {
+            "scan_id": filename,
+            "photo_url": f"/uploads/{filename}",
+            "scan_url": f"/uploads/{Path(scan_path).name}",
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/confirm-scan")
+def confirm_scan(
+    payload: ConfirmScanRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        using_bonus_credit = check_scan_allowance(user, db)
+        filename, path = get_pending_scan_path(payload.scan_id)
+        return process_receipt_file(path, filename, user, db, using_bonus_credit)
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.post("/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -996,185 +1252,9 @@ async def upload(
     db: Session = Depends(get_db),
 ):
     try:
-        using_bonus_credit = False
-        if not user.is_subscriber and weekly_scan_count(user, db) >= FREE_WEEKLY_LIMIT:
-            if (user.bonus_scan_credits or 0) <= 0:
-                raise HTTPException(
-                    status_code=429,
-                    detail="Free weekly scan limit reached. Watch a rewarded ad or subscribe for more weekly operations.",
-                )
-            using_bonus_credit = True
-
-        extension = os.path.splitext(file.filename or "receipt.jpg")[1] or ".jpg"
-        filename = f"{uuid4().hex}{extension}"
-        path = UPLOAD_DIR / filename
-
-        with open(path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        data = normalize_scan_data(ai_parse_receipt(str(path)))
-        ocr_data = None
-        ai_output = data.get("raw_ai_output")
-        ocr_output = "OCR skipped: AI result was reliable enough."
-
-        def get_ocr_data():
-            nonlocal ocr_data, ocr_output
-            if ocr_data is None:
-                ocr_data = normalize_scan_data(ocr_parse_receipt(str(path)))
-                ocr_output = ocr_data.get("raw_ocr_output")
-            return ocr_data
-
-        pairs, discounts, receipt_total = parse_receipt_candidate(data)
-
-        if scan_needs_ocr_support(pairs, discounts, receipt_total):
-            support_data = get_ocr_data()
-            support_pairs, support_discounts, _ = parse_receipt_candidate(support_data)
-
-            pairs = merge_missing_deposit_pairs(pairs, support_pairs)
-            discounts = merge_specific_ocr_discounts(discounts, support_discounts)
-            pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, support_pairs)
-            pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
-
-        if not scan_result_is_plausible(pairs, discounts, receipt_total):
-            full_data = normalize_scan_data(ai_parse_receipt(str(path), auto_crop=False))
-            full_pairs, full_discounts, full_receipt_total = parse_receipt_candidate(full_data)
-            effective_full_total = full_receipt_total or receipt_total
-            full_pairs = add_inferred_deposit_pair(full_pairs, full_discounts, effective_full_total)
-
-            if scan_result_is_plausible(full_pairs, full_discounts, effective_full_total):
-                data = full_data
-                pairs = full_pairs
-                discounts = full_discounts
-                receipt_total = effective_full_total
-                ai_output = append_debug_output(
-                    ai_output,
-                    "FULL PHOTO FALLBACK AI",
-                    full_data.get("raw_ai_output"),
-                )
-
-        if not scan_result_is_plausible(pairs, discounts, receipt_total):
-            fallback_data = get_ocr_data()
-            ocr_pairs, ocr_discounts, ocr_receipt_total = parse_receipt_candidate(fallback_data)
-            effective_ocr_total = ocr_receipt_total or receipt_total
-            ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, effective_ocr_total)
-
-            if scan_result_is_plausible(ocr_pairs, ocr_discounts, effective_ocr_total):
-                data = fallback_data
-                pairs = ocr_pairs
-                discounts = ocr_discounts
-                receipt_total = effective_ocr_total
-            else:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Receipt totals did not look reliable. Try a clearer, closer photo.",
-                )
-
-        discounts = remove_duplicate_discounts(discounts)
-
-        exclusions = parse_user_exclusions(user)
-        filtered_pairs_for_junk = [
-            (name, price)
-            for name, price in pairs
-            if not is_deposit_item(name) and not is_excluded_junk(name, exclusions)
-        ]
-        junk_items, junk_total = analyze_junk(filtered_pairs_for_junk)
-        junk_lookup = set(junk_items)
-        junk_discount_items = []
-        junk_discount_total = 0.0
-
-        for name, amount in discounts:
-            if is_excluded_junk(name, exclusions):
-                continue
-
-            discount_value = float(amount)
-            if discount_value >= 0:
-                continue
-
-            if discount_targets_junk_item(name, junk_items):
-                junk_discount_total += discount_value
-                junk_discount_items.append((name, f"{discount_value:.2f}"))
-
-        junk_total = round(max(junk_total + junk_discount_total, 0), 2)
-        calculated_total = calculated_scan_total(pairs, discounts)
-        total = receipt_total if receipt_total and receipt_total > 0 else calculated_total
-        junk_total = min(junk_total, total)
-        deposit_total = deposit_total_from_pairs(pairs)
-        useful_spending_total = useful_total(total, junk_total, deposit_total)
-        scan_path = data.get("scan_path")
-        if not scan_path and ocr_data:
-            scan_path = ocr_data.get("scan_path")
-        scan_relative_path = None
-        if scan_path:
-            scan_relative_path = f"uploads/{Path(scan_path).name}"
-
-        receipt = Receipt(
-            user_id=user.id,
-            total=total,
-            junk_total=junk_total,
-            photo_path=f"uploads/{filename}",
-            scan_path=scan_relative_path,
-            ai_output=ai_output,
-            ocr_output=ocr_output,
-        )
-        db.add(receipt)
-        db.flush()
-
-        if using_bonus_credit:
-            user.bonus_scan_credits = max((user.bonus_scan_credits or 0) - 1, 0)
-            db.add(user)
-
-        for name, price in pairs:
-            db.add(
-                Item(
-                    receipt_id=receipt.id,
-                    name=name,
-                    price=float(price),
-                    is_junk=1 if (name, price) in junk_lookup else 0,
-                )
-            )
-
-        for name, amount in discounts:
-            discount_is_junk = discount_targets_junk_item(name, junk_items)
-            db.add(
-                Item(
-                    receipt_id=receipt.id,
-                    name=name,
-                    price=float(amount),
-                    is_junk=1 if discount_is_junk else 0,
-                )
-            )
-
-        db.commit()
-        db.refresh(receipt)
-
-        return {
-            "id": receipt.id,
-            "total": total,
-            "junk_total": junk_total,
-            "deposit_total": deposit_total,
-            "useful_total": useful_spending_total,
-            "waste_percent": waste_percent(total, junk_total, deposit_total),
-            "photo_url": f"/uploads/{filename}",
-            "scan_url": f"/{scan_relative_path}" if scan_relative_path else None,
-            "ai_output": ai_output,
-            "ocr_output": ocr_output,
-            "discounts": [
-                {
-                    "name": name,
-                    "amount": float(amount),
-                    "is_junk": discount_targets_junk_item(name, junk_items),
-                }
-                for name, amount in discounts
-            ],
-            "items": [
-                {
-                    "name": name,
-                    "price": float(price),
-                    "is_junk": (name, price) in junk_lookup,
-                }
-                for name, price in pairs
-            ],
-        }
+        using_bonus_credit = check_scan_allowance(user, db)
+        filename, path = save_upload_file(file)
+        return process_receipt_file(path, filename, user, db, using_bonus_credit)
 
     except HTTPException:
         db.rollback()

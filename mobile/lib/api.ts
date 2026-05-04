@@ -41,6 +41,12 @@ export type Receipt = {
   items: ReceiptItem[];
 };
 
+export type PreparedScan = {
+  scan_id: string;
+  photo_url: string;
+  scan_url: string;
+};
+
 export type SubscriptionSummary = {
   locked: boolean;
   total: number;
@@ -167,6 +173,58 @@ export function uploadReceipt(uri: string, token: string) {
     };
 
     xhr.send(form);
+  });
+}
+
+export function prepareReceiptScan(uri: string, token: string) {
+  return new Promise<PreparedScan>((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", {
+      uri,
+      name: "receipt.jpg",
+      type: "image/jpeg",
+    } as any);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}/prepare-scan`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.timeout = 60000;
+
+    xhr.onload = () => {
+      let data: any = {};
+      try {
+        data = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        data = {};
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data as PreparedScan);
+        return;
+      }
+
+      reject(new Error(data.detail || data.error || `Prepare scan failed (${xhr.status})`));
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Could not reach the scan server. Check internet and try again."));
+    };
+
+    xhr.ontimeout = () => {
+      reject(new Error("Preparing the crop took too long. Try a clearer photo."));
+    };
+
+    xhr.send(form);
+  });
+}
+
+export function confirmPreparedScan(scanId: string, token: string) {
+  return request<Receipt>("/confirm-scan", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ scan_id: scanId }),
   });
 }
 
