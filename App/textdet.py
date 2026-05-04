@@ -16,6 +16,10 @@ PREPARED_JPEG_QUALITY = 74
 OCR_TARGET_WIDTH = 1500
 OCR_TIMEOUT_SECONDS = 4
 OCR_ORIENTATION_TIMEOUT_SECONDS = 1.5
+AI_SLICE_TARGET_WIDTH = 1200
+AI_MAX_SLICE_HEIGHT = 780
+AI_MAX_SLICES = 4
+AI_SLICE_OVERLAP = 0.14
 
 try:
     from dotenv import load_dotenv
@@ -86,6 +90,9 @@ Rules:
 - If the receipt image is sideways or upside down, read it after mentally rotating it to normal receipt orientation.
 - Do not use unit/kg/quantity prices as final_price. Example: "4.99 x 1.084 kg" is unit price; use the right-side final line price.
 - Never calculate or guess prices. If the final product price is unclear, skip the item.
+- You may receive the full receipt followed by enlarged vertical slices from top to bottom.
+- Use the enlarged slices to read small product rows. Use the full receipt only for context.
+- Merge overlap between slices; never duplicate a product, discount, or deposit line.
 - Keep Lithuanian product names as written. Convert comma decimals to dot numbers.
 """
 
@@ -408,6 +415,69 @@ def _parse_ai_json(result, scan_path):
     return _empty_result(scan_path, raw_ai_output=raw_result)
 
 
+def _encode_image_as_data_url(img):
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        img,
+        [int(cv2.IMWRITE_JPEG_QUALITY), PREPARED_JPEG_QUALITY],
+    )
+    if not ok:
+        return None
+
+    img_base64 = base64.b64encode(encoded.tobytes()).decode()
+    return f"data:image/jpeg;base64,{img_base64}"
+
+
+def _resize_slice_for_ai(img):
+    height, width = img.shape[:2]
+    if width >= AI_SLICE_TARGET_WIDTH:
+        return img
+
+    scale = AI_SLICE_TARGET_WIDTH / max(width, 1)
+    return cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+
+def _ai_image_inputs(scan_path):
+    img = cv2.imread(scan_path)
+    if img is None:
+        with open(scan_path, "rb") as f:
+            img_base64 = base64.b64encode(f.read()).decode()
+        return [
+            {
+                "type": "input_image",
+                "image_url": f"data:image/jpeg;base64,{img_base64}",
+                "detail": "high",
+            }
+        ]
+
+    inputs = []
+    full_url = _encode_image_as_data_url(img)
+    if full_url:
+        inputs.append({"type": "input_image", "image_url": full_url, "detail": "auto"})
+
+    height, width = img.shape[:2]
+    if height <= AI_MAX_SLICE_HEIGHT and width >= AI_SLICE_TARGET_WIDTH * 0.8:
+        return inputs
+
+    slice_count = min(AI_MAX_SLICES, max(1, int(np.ceil(height / AI_MAX_SLICE_HEIGHT))))
+    slice_height = min(height, max(AI_MAX_SLICE_HEIGHT, int(np.ceil((height / slice_count) * (1 + AI_SLICE_OVERLAP)))))
+    max_start = max(height - slice_height, 0)
+    if slice_count == 1:
+        starts = [0]
+    else:
+        starts = [int(round(value)) for value in np.linspace(0, max_start, slice_count)]
+
+    for y1 in starts:
+        y2 = min(y1 + slice_height, height)
+        crop = _resize_slice_for_ai(img[y1:y2, :])
+        crop_url = _encode_image_as_data_url(crop)
+        if crop_url:
+            inputs.append({"type": "input_image", "image_url": crop_url, "detail": "high"})
+
+    print(f"AI image inputs: full + {max(len(inputs) - 1, 0)} enlarged slices")
+    return inputs
+
+
 def ai_parse_receipt(image_path, auto_crop=True):
     if not os.path.exists(image_path):
         print("Image not found:", image_path)
@@ -417,22 +487,17 @@ def ai_parse_receipt(image_path, auto_crop=True):
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=45.0)
     scan_path = prepare_receipt_image(image_path, auto_crop=auto_crop)
 
-    with open(scan_path, "rb") as f:
-        img_base64 = base64.b64encode(f.read()).decode()
+    image_inputs = _ai_image_inputs(scan_path)
 
     response = client.responses.create(
         model="gpt-4.1-mini",
-        max_output_tokens=1200,
+        max_output_tokens=1800,
         input=[
             {
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": AI_PROMPT},
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:image/jpeg;base64,{img_base64}",
-                        "detail": "auto",
-                    },
+                    *image_inputs,
                 ],
             }
         ],
