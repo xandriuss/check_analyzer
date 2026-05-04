@@ -968,6 +968,27 @@ def complete_rewarded_ad(user: User = Depends(get_current_user), db: Session = D
     return usage_payload(user, db)
 
 
+def parse_receipt_candidate(scan_data):
+    pairs = merge_deposit_pairs(
+        parse_pairs(scan_data.get("items", [])),
+        parse_deposits(scan_data.get("deposits", [])),
+    )
+    discounts = remove_duplicate_discounts(parse_discounts(scan_data.get("discounts", [])))
+    receipt_total = parse_receipt_total(scan_data.get("receipt_total"))
+    pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
+    return pairs, discounts, receipt_total
+
+
+def append_debug_output(current_output, label, next_output):
+    if not next_output:
+        return current_output
+
+    if not current_output:
+        return f"=== {label} ===\n{next_output}"
+
+    return f"{current_output}\n\n=== {label} ===\n{next_output}"
+
+
 @app.post("/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -1003,21 +1024,11 @@ async def upload(
                 ocr_output = ocr_data.get("raw_ocr_output")
             return ocr_data
 
-        pairs = merge_deposit_pairs(
-            parse_pairs(data.get("items", [])),
-            parse_deposits(data.get("deposits", [])),
-        )
-        discounts = remove_duplicate_discounts(parse_discounts(data.get("discounts", [])))
-        receipt_total = parse_receipt_total(data.get("receipt_total"))
-        pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
+        pairs, discounts, receipt_total = parse_receipt_candidate(data)
 
         if scan_needs_ocr_support(pairs, discounts, receipt_total):
             support_data = get_ocr_data()
-            support_pairs = merge_deposit_pairs(
-                parse_pairs(support_data.get("items", [])),
-                parse_deposits(support_data.get("deposits", [])),
-            )
-            support_discounts = remove_duplicate_discounts(parse_discounts(support_data.get("discounts", [])))
+            support_pairs, support_discounts, _ = parse_receipt_candidate(support_data)
 
             pairs = merge_missing_deposit_pairs(pairs, support_pairs)
             discounts = merge_specific_ocr_discounts(discounts, support_discounts)
@@ -1025,13 +1036,25 @@ async def upload(
             pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
 
         if not scan_result_is_plausible(pairs, discounts, receipt_total):
+            full_data = normalize_scan_data(ai_parse_receipt(str(path), auto_crop=False))
+            full_pairs, full_discounts, full_receipt_total = parse_receipt_candidate(full_data)
+            effective_full_total = full_receipt_total or receipt_total
+            full_pairs = add_inferred_deposit_pair(full_pairs, full_discounts, effective_full_total)
+
+            if scan_result_is_plausible(full_pairs, full_discounts, effective_full_total):
+                data = full_data
+                pairs = full_pairs
+                discounts = full_discounts
+                receipt_total = effective_full_total
+                ai_output = append_debug_output(
+                    ai_output,
+                    "FULL PHOTO FALLBACK AI",
+                    full_data.get("raw_ai_output"),
+                )
+
+        if not scan_result_is_plausible(pairs, discounts, receipt_total):
             fallback_data = get_ocr_data()
-            ocr_pairs = merge_deposit_pairs(
-                parse_pairs(fallback_data.get("items", [])),
-                parse_deposits(fallback_data.get("deposits", [])),
-            )
-            ocr_discounts = remove_duplicate_discounts(parse_discounts(fallback_data.get("discounts", [])))
-            ocr_receipt_total = parse_receipt_total(fallback_data.get("receipt_total"))
+            ocr_pairs, ocr_discounts, ocr_receipt_total = parse_receipt_candidate(fallback_data)
             effective_ocr_total = ocr_receipt_total or receipt_total
             ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, effective_ocr_total)
 

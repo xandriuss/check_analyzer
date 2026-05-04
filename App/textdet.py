@@ -183,12 +183,42 @@ def _detect_receipt_crop(img):
         cropped, score = max(candidates, key=lambda item: item[1])
     else:
         cropped = img
-        score = width * height * 0.05
+        score = 0
 
     if cropped.shape[1] > cropped.shape[0]:
         cropped = cv2.rotate(cropped, cv2.ROTATE_90_CLOCKWISE)
 
     return cropped, score
+
+
+def _crop_is_safe(crop, original):
+    crop_height, crop_width = crop.shape[:2]
+    original_height, original_width = original.shape[:2]
+    if crop_width <= 0 or crop_height <= 0:
+        return False
+
+    crop_area = crop_width * crop_height
+    original_area = max(original_width * original_height, 1)
+    crop_area_ratio = crop_area / original_area
+    aspect = crop_height / max(crop_width, 1)
+
+    if crop_area_ratio < 0.08:
+        return False
+
+    if aspect < 0.95 and crop_area_ratio < 0.72:
+        return False
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    white_ratio = float(np.mean(gray > 145))
+    edge_density = float(np.mean(cv2.Canny(gray, 60, 150) > 0))
+
+    if white_ratio < 0.12:
+        return False
+
+    if edge_density < 0.006:
+        return False
+
+    return True
 
 
 def _auto_crop_receipt(img):
@@ -206,10 +236,8 @@ def _auto_crop_receipt(img):
     if best_crop is None:
         return img
 
-    original_area = img.shape[0] * img.shape[1]
-    crop_area = best_crop.shape[0] * best_crop.shape[1]
-    if crop_area < original_area * 0.18:
-        print("Auto receipt crop rejected: crop too small")
+    if best_score <= 0 or not _crop_is_safe(best_crop, img):
+        print("Auto receipt crop rejected: weak or unsafe crop")
         return img
 
     return best_crop
@@ -274,13 +302,14 @@ def _orient_receipt_upright(img):
     return best_img
 
 
-def prepare_receipt_image(image_path):
+def prepare_receipt_image(image_path, auto_crop=True):
     if not os.path.exists(image_path):
         print("Image not found:", image_path)
         return image_path
 
     source_path = Path(image_path)
-    prepared_path = source_path.with_name(f"{source_path.stem}_scan.jpg")
+    suffix = "_scan" if auto_crop else "_fullscan"
+    prepared_path = source_path.with_name(f"{source_path.stem}{suffix}.jpg")
     if prepared_path.exists() and prepared_path.stat().st_mtime >= source_path.stat().st_mtime:
         return str(prepared_path)
 
@@ -288,7 +317,7 @@ def prepare_receipt_image(image_path):
     if img is None:
         return image_path
 
-    cropped = _orient_receipt_upright(_auto_crop_receipt(img))
+    cropped = _orient_receipt_upright(_auto_crop_receipt(img)) if auto_crop else img
 
     long_edge = max(cropped.shape[:2])
     scale = min(1.0, PREPARED_MAX_LONG_EDGE / max(long_edge, 1))
@@ -377,14 +406,14 @@ def _parse_ai_json(result, scan_path):
     return _empty_result(scan_path, raw_ai_output=raw_result)
 
 
-def ai_parse_receipt(image_path):
+def ai_parse_receipt(image_path, auto_crop=True):
     if not os.path.exists(image_path):
         print("Image not found:", image_path)
         return _empty_result()
 
     start = time.perf_counter()
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=45.0)
-    scan_path = prepare_receipt_image(image_path)
+    scan_path = prepare_receipt_image(image_path, auto_crop=auto_crop)
 
     with open(scan_path, "rb") as f:
         img_base64 = base64.b64encode(f.read()).decode()
