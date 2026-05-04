@@ -83,6 +83,8 @@ AI_PROMPT = """Read a Lithuanian grocery receipt image. Return ONLY valid JSON, 
 Schema: {"items":[{"name":"...","final_price":0.00}],"discounts":[{"name":"...","amount":-0.00}],"deposits":[{"name":"...","amount":0.00}],"receipt_total":0.00}
 Rules:
 - items = bought product lines only, with the final right-side line price.
+- Read every product row between the cashier/receipt number area and the discount/tax/total section.
+- Do not return only the total. If product rows are visible, extract them.
 - discounts = negative discount lines, including product discounts like "Aciu nuolaida prekei:..." and generic discounts like "ACIU nuolaidos", "Suteiktos naudos", "Pritaikytos nuolaidos".
 - deposits = positive PET, skardine, depozitas, depozitine tara, or deposit/imoka lines. Use the final right-side deposit sum, e.g. 0.10 or 0.40.
 - receipt_total = "Kvito suma" or "Moketina suma" final total.
@@ -93,6 +95,7 @@ Rules:
 - You may receive the full receipt followed by enlarged vertical slices from top to bottom.
 - Use the enlarged slices to read small product rows. Use the full receipt only for context.
 - Merge overlap between slices; never duplicate a product, discount, or deposit line.
+- Prioritize your visual reading of the product rows over noisy OCR-like text artifacts.
 - Keep Lithuanian product names as written. Convert comma decimals to dot numbers.
 """
 

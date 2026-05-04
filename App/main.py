@@ -778,6 +778,49 @@ def scan_result_is_plausible(pairs, discounts, receipt_total):
     return True
 
 
+def ai_result_is_usable(pairs, discounts, receipt_total):
+    if not pairs:
+        return False
+
+    if has_repeated_price_hallucination(pairs):
+        return False
+
+    item_count = len([1 for name, _ in pairs if not is_deposit_item(name)])
+    if item_count < 3:
+        return False
+
+    calculated = calculated_scan_total(pairs, discounts)
+    if calculated <= 0:
+        return False
+
+    if receipt_total and receipt_total > 0:
+        if calculated > receipt_total * 2.4 and calculated - receipt_total > 18:
+            return False
+        if calculated < receipt_total * 0.35 and receipt_total - calculated > 18:
+            return False
+
+    return True
+
+
+def scan_quality_score(pairs, discounts, receipt_total):
+    if not pairs:
+        return -1000
+
+    item_count = len([1 for name, _ in pairs if not is_deposit_item(name)])
+    discount_count = len(discounts)
+    score = item_count * 12 + discount_count * 4
+
+    if receipt_total:
+        score += 20
+        delta = abs(scan_total_delta(pairs, discounts, receipt_total) or 0)
+        score -= min(delta * 3, 80)
+
+    if has_repeated_price_hallucination(pairs):
+        score -= 200
+
+    return score
+
+
 def waste_percent(total, junk_total, neutral_total=0):
     spending_total = max(float(total or 0) - float(neutral_total or 0), 0)
     if not spending_total:
@@ -1051,22 +1094,18 @@ def process_receipt_file(path: Path, filename: str, user: User, db: Session, usi
 
     pairs, discounts, receipt_total = parse_receipt_candidate(data)
 
-    if scan_needs_ocr_support(pairs, discounts, receipt_total):
-        support_data = get_ocr_data()
-        support_pairs, support_discounts, _ = parse_receipt_candidate(support_data)
-
-        pairs = merge_missing_deposit_pairs(pairs, support_pairs)
-        discounts = merge_specific_ocr_discounts(discounts, support_discounts)
-        pairs = merge_ocr_item_prices(pairs, discounts, receipt_total, support_pairs)
-        pairs = add_inferred_deposit_pair(pairs, discounts, receipt_total)
-
     if not scan_result_is_plausible(pairs, discounts, receipt_total):
         full_data = normalize_scan_data(ai_parse_receipt(str(path), auto_crop=False))
         full_pairs, full_discounts, full_receipt_total = parse_receipt_candidate(full_data)
         effective_full_total = full_receipt_total or receipt_total
         full_pairs = add_inferred_deposit_pair(full_pairs, full_discounts, effective_full_total)
+        current_score = scan_quality_score(pairs, discounts, receipt_total)
+        full_score = scan_quality_score(full_pairs, full_discounts, effective_full_total)
 
-        if scan_result_is_plausible(full_pairs, full_discounts, effective_full_total):
+        if scan_result_is_plausible(full_pairs, full_discounts, effective_full_total) or (
+            ai_result_is_usable(full_pairs, full_discounts, effective_full_total)
+            and full_score >= current_score
+        ):
             data = full_data
             pairs = full_pairs
             discounts = full_discounts
@@ -1077,13 +1116,28 @@ def process_receipt_file(path: Path, filename: str, user: User, db: Session, usi
                 full_data.get("raw_ai_output"),
             )
 
-    if not scan_result_is_plausible(pairs, discounts, receipt_total):
+    if not scan_result_is_plausible(pairs, discounts, receipt_total) and ai_result_is_usable(
+        pairs, discounts, receipt_total
+    ):
+        ai_output = append_debug_output(
+            ai_output,
+            "AI TOTAL WARNING",
+            (
+                "AI parsed usable product rows, but the line sum did not perfectly match "
+                "the printed total. OCR was not allowed to override this result."
+            ),
+        )
+    elif not scan_result_is_plausible(pairs, discounts, receipt_total):
         fallback_data = get_ocr_data()
         ocr_pairs, ocr_discounts, ocr_receipt_total = parse_receipt_candidate(fallback_data)
         effective_ocr_total = ocr_receipt_total or receipt_total
         ocr_pairs = add_inferred_deposit_pair(ocr_pairs, ocr_discounts, effective_ocr_total)
 
-        if scan_result_is_plausible(ocr_pairs, ocr_discounts, effective_ocr_total):
+        if not ai_result_is_usable(pairs, discounts, receipt_total) and scan_result_is_plausible(
+            ocr_pairs,
+            ocr_discounts,
+            effective_ocr_total,
+        ):
             data = fallback_data
             pairs = ocr_pairs
             discounts = ocr_discounts
